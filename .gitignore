@@ -1,0 +1,19 @@
+# Secrets / env
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+
+# Runtime artifacts
+*.log
+rca_reports/
+.langsmith/
+
+# IDE
+.idea/
+.vscode/

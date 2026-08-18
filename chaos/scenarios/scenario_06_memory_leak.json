@@ -1,0 +1,16 @@
+{
+  "id": "scenario_06_memory_leak",
+  "description": "Memory leak in payments-api (false-lead capable with CPU/memory metrics)",
+  "level": 3,
+  "expected_root_cause": "memory leak",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "memory_leak"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 7.00},
+    "count": 10
+  },
+  "settle_seconds": 2
+}

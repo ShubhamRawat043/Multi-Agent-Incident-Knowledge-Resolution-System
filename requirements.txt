@@ -1,0 +1,39 @@
+# Core agent stack
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-postgres>=0.0.12
+langgraph-checkpoint-postgres>=2.0.0
+
+# LLM / schemas
+openai>=1.40.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Web / ingestion
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27.0
+requests>=2.32.0
+
+# Data stores
+psycopg[binary,pool]>=3.2.0
+psycopg2-binary>=2.9.9
+pgvector>=0.3.0
+sqlalchemy>=2.0.0
+
+# Observability integrations
+sentry-sdk[fastapi]>=2.0.0
+prometheus-client>=0.20.0
+docker>=7.0.0
+PyGithub>=2.3.0
+
+# UI
+streamlit>=1.38.0
+pandas>=2.2.0
+
+# Utilities
+tenacity>=8.5.0
+numpy>=1.26.0

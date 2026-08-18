@@ -1,0 +1,16 @@
+{
+  "id": "scenario_08_config_error",
+  "description": "Configuration mismatch after deployment",
+  "level": 2,
+  "expected_root_cause": "configuration error",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "config_error"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 5.00},
+    "count": 3
+  },
+  "settle_seconds": 1
+}

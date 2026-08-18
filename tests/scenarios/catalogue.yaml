@@ -1,0 +1,125 @@
+# Behavioral test catalogue (16 tests across 7 levels)
+# Each entry maps to a chaos scenario and expected agent behaviors.
+
+tests:
+  - id: T01
+    level: 1
+    name: Application exception
+    scenario: scenario_01_exception
+    expect:
+      - sentry_or_stack_signal
+      - restart_or_healthcheck_considered
+      - verification_runs
+
+  - id: T02
+    level: 1
+    name: HTTP 500 spike
+    scenario: scenario_02_bad_deploy
+    expect:
+      - metrics_and_logs_identify_anomaly
+
+  - id: T03
+    level: 1
+    name: High latency
+    scenario: scenario_03_latency
+    expect:
+      - metrics_analyst_latency_hypothesis
+
+  - id: T04
+    level: 2
+    name: DB connection pool exhaustion
+    scenario: scenario_04_db_pool
+    expect:
+      - root_category_db_pool_exhaustion
+      - no_blind_rollback_without_deploy
+
+  - id: T05
+    level: 2
+    name: Bad deployment
+    scenario: scenario_02_bad_deploy
+    expect:
+      - change_correlator_signal
+      - rollback_requires_hitl
+
+  - id: T06
+    level: 2
+    name: Dependency failure
+    scenario: scenario_05_dependency_failure
+    expect:
+      - dependency_analyst_signal
+      - remediate_dependency_first
+
+  - id: T07
+    level: 3
+    name: Conflicting evidence
+    scenario: scenario_07_conflicting_evidence
+    expect:
+      - multiple_hypotheses_on_blackboard
+      - synthesis_ranks_hypotheses
+
+  - id: T08
+    level: 3
+    name: False lead (CPU as symptom)
+    scenario: scenario_07_conflicting_evidence
+    expect:
+      - synthesis_prefers_deploy_over_cpu_alone
+
+  - id: T09
+    level: 4
+    name: Low confidence re-investigate
+    scenario: scenario_08_config_error
+    expect:
+      - supervisor_may_investigate_again
+      - investigation_rounds_capped
+
+  - id: T10
+    level: 4
+    name: Verification failure loop
+    scenario: scenario_02_bad_deploy
+    notes: "First plan may restart; if verification fails, supervisor re-investigates then rollback"
+    expect:
+      - verification_can_fail
+      - supervisor_rethink_or_escalate
+
+  - id: T11
+    level: 5
+    name: Known incident RAG hit
+    scenario: scenario_04_db_pool
+    expect:
+      - retrieval_finds_historical_rca
+
+  - id: T12
+    level: 5
+    name: Similar but different
+    scenario: scenario_04_db_pool
+    notes: "Compare to INC-008 — agents must not blindly copy pool fix if evidence differs"
+    expect:
+      - rag_is_evidence_not_dictate
+
+  - id: T13
+    level: 6
+    name: Low-risk auto action
+    scenario: scenario_01_exception
+    expect:
+      - t0_t1_may_auto_execute
+
+  - id: T14
+    level: 6
+    name: High-risk HITL
+    scenario: scenario_02_bad_deploy
+    expect:
+      - t2_rollback_interrupts
+
+  - id: T15
+    level: 6
+    name: Rejected action
+    scenario: scenario_02_bad_deploy
+    expect:
+      - human_no_cancels_step
+
+  - id: T16
+    level: 7
+    name: Escalation when stuck
+    scenario: scenario_06_memory_leak
+    expect:
+      - max_rounds_or_retries_escalate

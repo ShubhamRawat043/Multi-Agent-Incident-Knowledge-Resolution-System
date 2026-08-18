@@ -1,0 +1,18 @@
+{
+  "id": "scenario_02_bad_deploy",
+  "description": "Bad payments-api deployment causing TypeError + error spike",
+  "level": 2,
+  "expected_root_cause": "bad deployment",
+  "deploy_tag": "v1.8",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "bad_deploy"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 29.99},
+    "count": 8
+  },
+  "settle_seconds": 2,
+  "notes": "Pair with a GitHub deploy event / IMAGE_TAG=v1.8 for ChangeCorrelator"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "scenario_03_latency",
+  "description": "Artificial latency in payments-api",
+  "level": 1,
+  "expected_root_cause": "high latency",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "latency"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 9.99},
+    "count": 4
+  },
+  "settle_seconds": 1
+}

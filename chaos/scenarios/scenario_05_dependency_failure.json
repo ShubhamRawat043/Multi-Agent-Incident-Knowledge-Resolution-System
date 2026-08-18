@@ -1,0 +1,16 @@
+{
+  "id": "scenario_05_dependency_failure",
+  "description": "payments-api unavailable → cascading orders failure",
+  "level": 2,
+  "expected_root_cause": "dependency failure",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "dependency_failure"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 11.00},
+    "count": 5
+  },
+  "settle_seconds": 1
+}

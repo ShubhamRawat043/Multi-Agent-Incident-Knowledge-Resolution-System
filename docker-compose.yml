@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: incident-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-incident}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-incident}
+      POSTGRES_DB: ${POSTGRES_DB:-incident_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-incident} -d ${POSTGRES_DB:-incident_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: incident-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+  payments-api:
+    build:
+      context: ./demo_target
+      dockerfile: payments_api/Dockerfile
+    container_name: incident-payments-api
+    labels:
+      incident-demo: "true"
+    environment:
+      SERVICE_NAME: payments-api
+      DATABASE_URL: postgresql://incident:incident@postgres:5432/incident_db
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      FAULT_MODE: "none"
+      IMAGE_TAG: v1.7
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  orders-api:
+    build:
+      context: ./demo_target
+      dockerfile: orders_api/Dockerfile
+    container_name: incident-orders-api
+    labels:
+      incident-demo: "true"
+    environment:
+      SERVICE_NAME: orders-api
+      PAYMENTS_API_URL: http://payments-api:8000
+      DATABASE_URL: postgresql://incident:incident@postgres:5432/incident_db
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      FAULT_MODE: "none"
+      IMAGE_TAG: v1.0
+    ports:
+      - "8001:8000"
+    depends_on:
+      - payments-api
+      - postgres
+
+volumes:
+  pgdata:

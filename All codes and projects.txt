@@ -1,0 +1,2725 @@
+1) Prompt Chaining-
+from langgraph.graph import StateGraph, START, END
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
+from dotenv import load_dotenv
+from typing import TypedDict
+
+# %%
+load_dotenv()
+llm=HuggingFaceEndpoint(repo_id='Qwen/Qwen2.5-72B-Instruct', task='text-generation')
+model=ChatHuggingFace(llm=llm)
+
+# %%
+class BlogState(TypedDict):
+    topic: str
+    outline: str
+    blog: str
+
+# %%
+def gen_outline(state: BlogState)-> BlogState:
+    topic=state['topic']
+    prompt=f"Generate a detailed outline for a blog on the topic: {topic}"
+    state['outline']=model.invoke(prompt).content
+    return state
+
+# %%
+def gen_blog(state: BlogState)-> BlogState:
+    topic=state['topic']
+    outline=state['outline']
+    prompt=f"Write a detailed blog on the title '{topic}', using the following outline: \n {outline}"
+    state['blog']=model.invoke(prompt).content
+    return state
+
+# %%
+graph=StateGraph(BlogState)
+graph.add_node('generate_outline', gen_outline)
+graph.add_node('generate_blog', gen_blog)
+graph.add_edge(START, 'generate_outline')
+graph.add_edge('generate_outline', 'generate_blog')
+graph.add_edge('generate_blog', END)
+workflow=graph.compile()
+
+# %%
+graph.compile()
+
+# %%
+blog=workflow.invoke({'topic': 'Rise of AI in India'})['blog']
+print(blog)
+
+# %%
+blog=workflow.invoke({'topic': 'Rise of AI in India'})
+print(blog['outline'])
+print(blog['blog'])
+
+
+2) Parallel Workflow-
+import os
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+import operator
+
+# %%
+load_dotenv()
+model = ChatOpenAI(model='gpt-4o-mini')
+
+# %%
+class EvaluationSchema(BaseModel):
+    feedback: str=Field(description='Detailed feedback for the essay')
+    score: int=Field(description='Score this out of 10', ge=0, le=10)
+
+# %%
+structured_model = model.with_structured_output(EvaluationSchema)
+
+# %%
+essay='''Technology in today world is doing a lot of things. Many people are using smart phones and computers and they are everywhere in the society. But is technology good or bad? I think it is both because of reasons. First of all, artificial intelligence is making robots that can do homework. This is very good for students but bad for teachers because they don't know who did it. 
+
+Also, another thing about technology is the internet. The internet has a lot of information, which is good. But then there is pollution. Factories make computers and factories make a lot of smoke that hurts the sky. So if we use computers we are making the sky dirty. Also my uncle says AI will take all the jobs in the world in two days. If nobody has a job, how will they buy the computers? It makes no sense. Furthermore, the digital divide is when people do not have internet, so they can't be hacked, which is actually a safe thing so maybe the digital divide is good.
+
+In conclusion, technology is a big paradox. It helps us watch things but makes us lazy. The government should ban bad AI and only keep the good AI. Therefore, society will be happy and innovation will be equitable for everyone who has a phone.'''
+
+# %%
+prompt = f'Evaluate the language quality of the following essay and provide a feedback and assign a score out of 10 \n {essay}'
+structured_model.invoke(prompt)
+
+# %%
+class UPSCState(TypedDict):
+    essay: str
+    language_feedback: str
+    analysis_feedback: str
+    clarity_feedback: str
+    overall_feedback: str
+    individual_scores: Annotated[list[int],operator.add]
+    avg_score: float
+
+# %%
+def evaluate_language(state: UPSCState):
+
+    prompt = f'Evaluate the language quality of the following essay and provide a feedback and assign a score out of 10 \n {state["essay"]}'
+    output = structured_model.invoke(prompt)
+
+    return {'language_feedback': output.feedback, 'individual_scores': [output.score]}
+
+def evaluate_analysis(state: UPSCState):
+
+    prompt = f'Evaluate the depth of analysis of the following essay and provide a feedback and assign a score out of 10 \n {state["essay"]}'
+    output = structured_model.invoke(prompt)
+
+    return {'analysis_feedback': output.feedback, 'individual_scores': [output.score]}
+
+def evaluate_thought(state: UPSCState):
+
+    prompt = f'Evaluate the clarity of thought of the following essay and provide a feedback and assign a score out of 10 \n {state["essay"]}'
+    output = structured_model.invoke(prompt)
+
+    return {'clarity_feedback': output.feedback, 'individual_scores': [output.score]}
+
+def final_evaluation(state: UPSCState):
+
+    # summary feedback
+    prompt = f'Based on the following feedbacks create a summarized feedback \n language feedback - {state["language_feedback"]} \n depth of analysis feedback - {state["analysis_feedback"]} \n clarity of thought feedback - {state["clarity_feedback"]}'
+    overall_feedback = model.invoke(prompt).content
+
+    # avg calculate
+    avg_score = sum(state['individual_scores'])/len(state['individual_scores'])
+
+    return {'overall_feedback': overall_feedback, 'avg_score': avg_score}
+
+# %%
+graph=StateGraph(UPSCState)
+graph.add_node('Clarity of thought', evaluate_thought)
+graph.add_node('Depth of analysis', evaluate_analysis)
+graph.add_node('Language', evaluate_language)
+graph.add_node('Final Eval', final_evaluation)
+graph.add_edge(START, 'Clarity of thought')
+graph.add_edge(START, 'Depth of analysis')
+graph.add_edge(START, 'Language')
+graph.add_edge('Clarity of thought', 'Final Eval')
+graph.add_edge('Depth of analysis', 'Final Eval')
+graph.add_edge('Language', 'Final Eval')
+graph.add_edge('Final Eval', END)
+workflow=graph.compile()
+
+# %%
+graph.compile()
+
+# %%
+initial_state={
+    'essay': essay
+}
+final_result=workflow.invoke(initial_state)
+print(final_result)
+
+
+3) Conditional Workflow-
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from typing import TypedDict, Literal
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+
+# %%
+load_dotenv()
+model=ChatOpenAI(model='gpt-4o-mini')
+
+# %%
+class SentimentSchema(BaseModel):
+    sentiment: Literal['positive', 'negative']= Field(description='Sentiment of the review')
+
+# %%
+structured_model= model.with_structured_output(SentimentSchema)
+
+# %%
+class ReviewState(TypedDict):
+    review: str
+    sentiment: Literal['positive', 'negative']
+    diagnosis: dict
+    response: str
+
+# %%
+class DiagnosisSchema(BaseModel):
+    issue_type: Literal["UX", "Performance", "Bug", "Support", "Other"] = Field(description='The category of issue mentioned in the review')
+    tone: Literal["angry", "frustrated", "disappointed", "calm"] = Field(description='The emotional tone expressed by the user')
+    urgency: Literal["low", "medium", "high"] = Field(description='How urgent or critical the issue appears to be')
+
+structured_model2= model.with_structured_output(DiagnosisSchema)
+
+# %%
+def find_sentiment(state: ReviewState):
+    prompt=f"For the following review, find out the sentiment \n {state['review']}"
+    return {'sentiment': structured_model.invoke(prompt).sentiment}
+
+def positive_response(state: ReviewState):
+    prompt=f"Write a warm thank you message in response to this review- \n {state['review']} \n Also ask user to leave feedback on website."
+    return {'response': model.invoke(prompt).content}
+    
+def run_diagnosis(state: ReviewState):
+    prompt=f"Diagnose this negative review: \n {state['review']} \n Return issue type, tone and urgency"
+    result=structured_model2.invoke(prompt)
+    # return {'diagnosis': {'issue_type': result.issue_type, 'tone': result.tone, 'urgency': result.urgency}}
+    return {'diagnosis': result.model_dump()}
+    
+def negative_response(state: ReviewState):
+    diagnosis = state['diagnosis']
+
+    prompt = f"""You are a support assistant.
+The user had a '{diagnosis['issue_type']}' issue, sounded '{diagnosis['tone']}', and marked urgency as '{diagnosis['urgency']}'.
+Write an empathetic, helpful resolution message.
+"""
+    response = model.invoke(prompt).content
+    return {'response': response}
+    
+def check_sentiment(state: ReviewState)-> Literal['positive_response', 'run_diagnosis']:
+    if state['sentiment']== 'positive':
+        return 'positive_response'
+    else:
+        return 'run_diagnosis'
+
+# %%
+graph = StateGraph(ReviewState)
+
+graph.add_node('find_sentiment', find_sentiment)
+graph.add_node('positive_response', positive_response)
+graph.add_node('run_diagnosis', run_diagnosis)
+graph.add_node('negative_response', negative_response)
+
+graph.add_edge(START, 'find_sentiment')
+
+graph.add_conditional_edges('find_sentiment', check_sentiment)
+
+graph.add_edge('positive_response', END)
+
+graph.add_edge('run_diagnosis', 'negative_response')
+graph.add_edge('negative_response', END)
+
+workflow = graph.compile()
+
+# %%
+graph.compile()
+
+# %%
+intial_state={
+    'review': "I've been trying to log in for over an hour now, and the app keeps freezing on the authentication screen. I even tried reinstalling it, but no luck. This kind of bug is unacceptable, especially when it affects basic functionality."
+}
+workflow.invoke(intial_state)
+
+
+4) Iterative worklow-
+from langgraph.graph import StateGraph,START, END
+from typing import TypedDict, Literal, Annotated
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from dotenv import load_dotenv
+import operator
+
+# %%
+load_dotenv()
+generator_llm=ChatOpenAI(model='gpt-4o-mini')
+evaluator_llm=ChatOpenAI(model='gpt-4.1-mini')
+optimizer_llm=ChatOpenAI(model='gpt-4o-mini')
+
+# %%
+from pydantic import BaseModel, Field
+
+class TweetEvaluation(BaseModel):
+    evaluation: Literal["approved", "needs_improvement"] = Field(..., description="Final evaluation result.")
+    feedback: str = Field(..., description="feedback for the tweet.")
+
+structured_evaluator_llm = evaluator_llm.with_structured_output(TweetEvaluation)
+
+# %%
+class TweetState(TypedDict):
+    topic: str
+    tweet: str
+    evaluation: Literal['approved', 'needs improvement']
+    feedback: str
+    iteration: int
+    max_iteration: int
+    tweet_history: Annotated[list[str], operator.add]
+    feedback_history: Annotated[list[str], operator.add]
+
+# %%
+def generate_tweet(state: TweetState):
+    messages = [
+        SystemMessage(content="You are a funny and clever Twitter/X influencer."),
+        HumanMessage(content=f"""
+Write a short, original, and hilarious tweet on the topic: "{state['topic']}".
+
+Rules:
+- Do NOT use question-answer format.
+- Max 280 characters.
+- Use observational humor, irony, sarcasm, or cultural references.
+- Think in meme logic, punchlines, or relatable takes.
+- Use simple, day to day english
+""")
+    ]
+    response = generator_llm.invoke(messages).content
+    return {'tweet': response, 'tweet_history': [response]}
+
+def evaluate_tweet(state: TweetState):
+    messages = [
+    SystemMessage(content="You are a ruthless, no-laugh-given Twitter critic. You evaluate tweets based on humor, originality, virality, and tweet format."),
+    HumanMessage(content=f"""
+Evaluate the following tweet:
+
+Tweet: "{state['tweet']}"
+
+Use the criteria below to evaluate the tweet:
+
+1. Originality - Is this fresh, or have you seen it a hundred times before?  
+2. Humor - Did it genuinely make you smile, laugh, or chuckle?  
+3. Punchiness - Is it short, sharp, and scroll-stopping?  
+4. Virality Potential - Would people retweet or share it?  
+5. Format - Is it a well-formed tweet (not a setup-punchline joke, not a Q&A joke, and under 280 characters)?
+
+Auto-reject if:
+- It's written in question-answer format (e.g., "Why did..." or "What happens when...")
+- It exceeds 280 characters
+- It reads like a traditional setup-punchline joke
+- Dont end with generic, throwaway, or deflating lines that weaken the humor (e.g., “Masterpieces of the auntie-uncle universe” or vague summaries)
+
+### Respond ONLY in structured format:
+- evaluation: "approved" or "needs_improvement"  
+- feedback: One paragraph explaining the strengths and weaknesses 
+""")
+    ]
+    response=structured_evaluator_llm.invoke(messages)
+    return {'evaluation': response.evaluation, 'feedback': response.feedback, 'feedback_history': [response.feedback]}
+
+def optimize_tweet(state: TweetState):
+    messages = [
+        SystemMessage(content="You punch up tweets for virality and humor based on given feedback."),
+        HumanMessage(content=f"""
+Improve the tweet based on this feedback:
+"{state['feedback']}"
+
+Topic: "{state['topic']}"
+Original Tweet:
+{state['tweet']}
+
+Re-write it as a short, viral-worthy tweet. Avoid Q&A style and stay under 280 characters.
+""")
+    ]
+    response=optimizer_llm.invoke(messages).content
+    iteration=state['iteration']+1
+    return {'tweet': response.content, 'iteration': iteration, 'tweet_history': [response]}
+
+def route_evaluation(state: TweetState):
+    if(state['evaluation']=='approved') or (state['iteration']>=state['max_iteration']):
+        return 'approved'
+    else:
+        return 'needs_improvement'
+
+# %%
+graph = StateGraph(TweetState)
+
+graph.add_node('generate', generate_tweet)
+graph.add_node('evaluate', evaluate_tweet)
+graph.add_node('optimize', optimize_tweet)
+
+graph.add_edge(START, 'generate')
+graph.add_edge('generate', 'evaluate')
+
+graph.add_conditional_edges('evaluate', route_evaluation, {'approved': END, 'needs_improvement': 'optimize'})
+graph.add_edge('optimize', 'evaluate')
+
+workflow = graph.compile()
+
+workflow
+
+# %%
+initial_state = {
+    "topic": "srhberhb",
+    "iteration": 1,
+    "max_iteration": 5
+}
+result = workflow.invoke(initial_state)
+
+
+5) Persistence-
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+from langgraph.checkpoint.memory import InMemorySaver # It is gonna save both intermediate and end state values at RAM
+
+# %%
+load_dotenv()
+model=ChatOpenAI(model='gpt-4o-mini')
+
+# %%
+class JokeState(TypedDict):
+
+    topic: str
+    joke: str
+    explanation: str
+
+# %%
+def generate_joke(state: JokeState):
+
+    prompt = f'generate a joke on the topic {state["topic"]}'
+    response = model.invoke(prompt).content
+
+    return {'joke': response}
+
+def generate_explanation(state: JokeState):
+
+    prompt = f'write an explanation for the joke - {state["joke"]}'
+    response = model.invoke(prompt).content
+
+    return {'explanation': response}
+
+# %%
+graph = StateGraph(JokeState)
+
+graph.add_node('generate_joke', generate_joke)
+graph.add_node('generate_explanation', generate_explanation)
+
+graph.add_edge(START, 'generate_joke')
+graph.add_edge('generate_joke', 'generate_explanation')
+graph.add_edge('generate_explanation', END)
+
+checkpointer = InMemorySaver()
+
+workflow = graph.compile(checkpointer=checkpointer)
+
+# %%
+workflow
+
+# %%
+initial_state={
+    'topic': 'India'
+}
+config={'configurable': {'thread_id': '1'}}
+workflow.invoke(initial_state, config=config)
+
+# %%
+workflow.get_state(config)
+
+# %%
+list(workflow.get_state_history(config))
+
+# %% [markdown]
+# Time Travel
+
+# %%
+workflow.get_state({'configurable': {'thread_id': '1', 'checkpoint_id': '1f1814e8-eec3-63b1-8000-47655dd47fb7'}})
+
+# %%
+workflow.invoke(None, {'configurable': {'thread_id': '1', 'checkpoint_id': '1f1814e8-eec3-63b1-8000-47655dd47fb7'}})
+
+# %%
+list(workflow.get_state_history(config))  # 3 more histories got added. Also, here config tells us basically that show of thread_id=1, cause its the only thing in config variable
+
+# %% [markdown]
+# UPDATE STATE
+
+# %%
+workflow.update_state({'configurable': {'thread_id': '1', 'checkpoint_id': '1f1814e8-eec3-63b1-8000-47655dd47fb7', 'checkpoint_ns': ''}}, {'topic': 'AI'})
+
+# %%
+list(workflow.get_state_history(config))  # Additional state history added with topic ai
+
+# %%
+workflow.invoke(None, {'configurable': {'thread_id': '1', 'checkpoint_id': '1f1814f2-3796-6828-8001-986ca2fd8387'}}) # checkpoin id is of the newest state update, basically the topmost state's checkpoint id in above cell
+
+# %%
+list(workflow.get_state_history(config))
+
+
+6) Chatbot project (Persistence, Streaming, RAG, tools, etc)-
+
+Backend-
+from __future__ import annotations
+
+import os
+import sqlite3
+import tempfile
+from typing import Annotated, Any, Dict, Optional, TypedDict
+
+from dotenv import load_dotenv
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.vectorstores import FAISS
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
+import requests
+
+load_dotenv()
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+
+_THREAD_RETRIEVERS: Dict[str, Any] = {}
+_THREAD_METADATA: Dict[str, dict] = {}
+
+
+def _get_retriever(thread_id: Optional[str]):
+    """Fetch the retriever for a thread if available."""
+    if thread_id and thread_id in _THREAD_RETRIEVERS:
+        return _THREAD_RETRIEVERS[thread_id]
+    return None
+
+
+def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None) -> dict:
+    """
+    Build a FAISS retriever for the uploaded PDF and store it for the thread.
+
+    Returns a summary dict that can be surfaced in the UI.
+    """
+    if not file_bytes:
+        raise ValueError("No bytes received for ingestion.")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+        temp_file.write(file_bytes)
+        temp_path = temp_file.name
+
+    try:
+        loader = PyPDFLoader(temp_path)
+        docs = loader.load()
+
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=200, separators=["\n\n", "\n", " ", ""]
+        )
+        chunks = splitter.split_documents(docs)
+
+        vector_store = FAISS.from_documents(chunks, embeddings)
+        retriever = vector_store.as_retriever(
+            search_type="similarity", search_kwargs={"k": 4}
+        )
+
+        _THREAD_RETRIEVERS[str(thread_id)] = retriever
+        _THREAD_METADATA[str(thread_id)] = {
+            "filename": filename or os.path.basename(temp_path),
+            "documents": len(docs),
+            "chunks": len(chunks),
+        }
+
+        return {
+            "filename": filename or os.path.basename(temp_path),
+            "documents": len(docs),
+            "chunks": len(chunks),
+        }
+    finally:
+        # The FAISS store keeps copies of the text, so the temp file is safe to remove.
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+# -------------------
+# 3. Tools
+# -------------------
+search_tool = DuckDuckGoSearchRun(region="us-en")
+
+
+@tool
+def calculator(first_num: float, second_num: float, operation: str) -> dict:
+    """
+    Perform a basic arithmetic operation on two numbers.
+    Supported operations: add, sub, mul, div
+    """
+    try:
+        if operation == "add":
+            result = first_num + second_num
+        elif operation == "sub":
+            result = first_num - second_num
+        elif operation == "mul":
+            result = first_num * second_num
+        elif operation == "div":
+            if second_num == 0:
+                return {"error": "Division by zero is not allowed"}
+            result = first_num / second_num
+        else:
+            return {"error": f"Unsupported operation '{operation}'"}
+
+        return {
+            "first_num": first_num,
+            "second_num": second_num,
+            "operation": operation,
+            "result": result,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@tool
+def get_stock_price(symbol: str) -> dict:
+    """
+    Fetch latest stock price for a given symbol (e.g. 'AAPL', 'TSLA') 
+    using Alpha Vantage with API key in the URL.
+    """
+    url = (
+        "https://www.alphavantage.co/query"
+        f"?function=GLOBAL_QUOTE&symbol={symbol}&apikey=C9PE94QUEW9VWGFM"
+    )
+    r = requests.get(url)
+    return r.json()
+
+
+@tool
+def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
+    """
+    Retrieve relevant information from the uploaded PDF for this chat thread.
+    Always include the thread_id when calling this tool.
+    """
+    retriever = _get_retriever(thread_id)
+    if retriever is None:
+        return {
+            "error": "No document indexed for this chat. Upload a PDF first.",
+            "query": query,
+        }
+
+    result = retriever.invoke(query)
+    context = [doc.page_content for doc in result]
+    metadata = [doc.metadata for doc in result]
+
+    return {
+        "query": query,
+        "context": context,
+        "metadata": metadata,
+        "source_file": _THREAD_METADATA.get(str(thread_id), {}).get("filename"),
+    }
+
+
+tools = [search_tool, get_stock_price, calculator, rag_tool]
+llm_with_tools = llm.bind_tools(tools)
+
+# -------------------
+# 4. State
+# -------------------
+class ChatState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+
+
+# -------------------
+# 5. Nodes
+# -------------------
+def chat_node(state: ChatState, config=None):
+    """LLM node that may answer or request a tool call."""
+    thread_id = None
+    if config and isinstance(config, dict):
+        thread_id = config.get("configurable", {}).get("thread_id")
+
+    system_message = SystemMessage(
+        content=(
+            "You are a helpful assistant. For questions about the uploaded PDF, call "
+            "the `rag_tool` and include the thread_id "
+            f"`{thread_id}`. You can also use the web search, stock price, and "
+            "calculator tools when helpful. If no document is available, ask the user "
+            "to upload a PDF."
+        )
+    )
+
+    messages = [system_message, *state["messages"]]
+    response = llm_with_tools.invoke(messages, config=config)
+    return {"messages": [response]}
+
+
+tool_node = ToolNode(tools)
+
+# -------------------
+# 6. Checkpointer
+# -------------------
+conn = sqlite3.connect(database="chatbot.db", check_same_thread=False)
+checkpointer = SqliteSaver(conn=conn)
+
+# -------------------
+# 7. Graph
+# -------------------
+graph = StateGraph(ChatState)
+graph.add_node("chat_node", chat_node)
+graph.add_node("tools", tool_node)
+
+graph.add_edge(START, "chat_node")
+graph.add_conditional_edges("chat_node", tools_condition)
+graph.add_edge("tools", "chat_node")
+
+chatbot = graph.compile(checkpointer=checkpointer)
+
+# -------------------
+# 8. Helpers
+# -------------------
+def retrieve_all_threads():
+    all_threads = set()
+    for checkpoint in checkpointer.list(None):
+        all_threads.add(checkpoint.config["configurable"]["thread_id"])
+    return list(all_threads)
+
+
+def thread_has_document(thread_id: str) -> bool:
+    return str(thread_id) in _THREAD_RETRIEVERS
+
+
+def thread_document_metadata(thread_id: str) -> dict:
+    return _THREAD_METADATA.get(str(thread_id), {})
+
+
+Frontend-
+import uuid
+
+import streamlit as st
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from chatbot_backend import (
+    chatbot,
+    ingest_pdf,
+    retrieve_all_threads,
+    thread_document_metadata,
+)
+
+
+# =========================== Utilities ===========================
+def generate_thread_id():
+    return uuid.uuid4()
+
+
+def reset_chat():
+    thread_id = generate_thread_id()
+    st.session_state["thread_id"] = thread_id
+    add_thread(thread_id)
+    st.session_state["message_history"] = []
+
+
+def add_thread(thread_id):
+    if thread_id not in st.session_state["chat_threads"]:
+        st.session_state["chat_threads"].append(thread_id)
+
+
+def load_conversation(thread_id):
+    state = chatbot.get_state(config={"configurable": {"thread_id": thread_id}})
+    return state.values.get("messages", [])
+
+
+# ======================= Session Initialization ===================
+if "message_history" not in st.session_state:
+    st.session_state["message_history"] = []
+
+if "thread_id" not in st.session_state:
+    st.session_state["thread_id"] = generate_thread_id()
+
+if "chat_threads" not in st.session_state:
+    st.session_state["chat_threads"] = retrieve_all_threads()
+
+if "ingested_docs" not in st.session_state:
+    st.session_state["ingested_docs"] = {}
+
+add_thread(st.session_state["thread_id"])
+
+thread_key = str(st.session_state["thread_id"])
+thread_docs = st.session_state["ingested_docs"].setdefault(thread_key, {})
+threads = st.session_state["chat_threads"][::-1]
+selected_thread = None
+
+# ============================ Sidebar ============================
+st.sidebar.title("LangGraph Chatbot")
+st.sidebar.markdown(f"**Thread ID:** `{thread_key}`")
+
+if st.sidebar.button("New Chat", use_container_width=True):
+    reset_chat()
+    st.rerun()
+
+if thread_docs:
+    latest_doc = list(thread_docs.values())[-1]
+    st.sidebar.success(
+        f"Using `{latest_doc.get('filename')}` "
+        f"({latest_doc.get('chunks')} chunks from {latest_doc.get('documents')} pages)"
+    )
+else:
+    st.sidebar.info("No PDF indexed yet.")
+
+uploaded_pdf = st.sidebar.file_uploader("Upload a PDF for this chat", type=["pdf"])
+if uploaded_pdf:
+    if uploaded_pdf.name in thread_docs:
+        st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
+    else:
+        with st.sidebar.status("Indexing PDF…", expanded=True) as status_box:
+            summary = ingest_pdf(
+                uploaded_pdf.getvalue(),
+                thread_id=thread_key,
+                filename=uploaded_pdf.name,
+            )
+            thread_docs[uploaded_pdf.name] = summary
+            status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
+
+st.sidebar.subheader("Past conversations")
+if not threads:
+    st.sidebar.write("No past conversations yet.")
+else:
+    for thread_id in threads:
+        if st.sidebar.button(str(thread_id), key=f"side-thread-{thread_id}"):
+            selected_thread = thread_id
+
+# ============================ Main Layout ========================
+st.title("Rasberry")
+
+# Chat area
+for message in st.session_state["message_history"]:
+    with st.chat_message(message["role"]):
+        st.text(message["content"])
+
+user_input = st.chat_input("Ask about your document or use tools")
+
+if user_input:
+    st.session_state["message_history"].append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.text(user_input)
+
+    CONFIG = {
+        "configurable": {"thread_id": thread_key},
+        "metadata": {"thread_id": thread_key},
+        "run_name": "chat_turn",
+    }
+
+    with st.chat_message("assistant"):
+        status_holder = {"box": None}
+
+        def ai_only_stream():
+            for message_chunk, _ in chatbot.stream(
+                {"messages": [HumanMessage(content=user_input)]},
+                config=CONFIG,
+                stream_mode="messages",
+            ):
+                if isinstance(message_chunk, ToolMessage):
+                    tool_name = getattr(message_chunk, "name", "tool")
+                    if status_holder["box"] is None:
+                        status_holder["box"] = st.status(
+                            f"🔧 Using `{tool_name}` …", expanded=True
+                        )
+                    else:
+                        status_holder["box"].update(
+                            label=f"🔧 Using `{tool_name}` …",
+                            state="running",
+                            expanded=True,
+                        )
+
+                if isinstance(message_chunk, AIMessage):
+                    yield message_chunk.content
+
+        ai_message = st.write_stream(ai_only_stream())
+
+        if status_holder["box"] is not None:
+            status_holder["box"].update(
+                label="✅ Tool finished", state="complete", expanded=False
+            )
+
+    st.session_state["message_history"].append(
+        {"role": "assistant", "content": ai_message}
+    )
+
+    doc_meta = thread_document_metadata(thread_key)
+    if doc_meta:
+        st.caption(
+            f"Document indexed: {doc_meta.get('filename')} "
+            f"(chunks: {doc_meta.get('chunks')}, pages: {doc_meta.get('documents')})"
+        )
+
+st.divider()
+
+if selected_thread:
+    st.session_state["thread_id"] = selected_thread
+    messages = load_conversation(selected_thread)
+
+    temp_messages = []
+    for msg in messages:
+        role = "user" if isinstance(msg, HumanMessage) else "assistant"
+        temp_messages.append({"role": role, "content": msg.content})
+    st.session_state["message_history"] = temp_messages
+    st.session_state["ingested_docs"].setdefault(str(selected_thread), {})
+    st.rerun()
+
+
+7) Human in the Loop-
+# backend.py
+
+from langgraph.graph import StateGraph, START
+from typing import TypedDict, Annotated
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_core.tools import tool
+from langgraph.types import interrupt, Command
+from dotenv import load_dotenv
+import requests
+
+load_dotenv()
+
+# -------------------
+# 1. LLM
+# -------------------
+llm = ChatOpenAI()
+
+# -------------------
+# 2. Tools
+# -------------------
+@tool
+def get_stock_price(symbol: str) -> dict:
+    """
+    Fetch latest stock price for a given symbol (e.g. 'AAPL', 'TSLA') 
+    using Alpha Vantage with API key in the URL.
+    """
+    url = (
+        "https://www.alphavantage.co/query"
+        f"?function=GLOBAL_QUOTE&symbol={symbol}&apikey=C9PE94QUEW9VWGFM"
+    )
+    r = requests.get(url)
+    return r.json()
+
+
+@tool
+def purchase_stock(symbol: str, quantity: int) -> dict:
+    """
+    Simulate purchasing a given quantity of a stock symbol.
+
+    HUMAN-IN-THE-LOOP:
+    Before confirming the purchase, this tool will interrupt
+    and wait for a human decision ("yes" / anything else).
+    """
+    # This pauses the graph and returns control to the caller
+    decision = interrupt(f"Approve buying {quantity} shares of {symbol}? (yes/no)")
+
+    if isinstance(decision, str) and decision.lower() == "yes":
+        return {
+            "status": "success",
+            "message": f"Purchase order placed for {quantity} shares of {symbol}.",
+            "symbol": symbol,
+            "quantity": quantity,
+        }
+    
+    else:
+        return {
+            "status": "cancelled",
+            "message": f"Purchase of {quantity} shares of {symbol} was declined by human.",
+            "symbol": symbol,
+            "quantity": quantity,
+        }
+
+
+tools = [get_stock_price, purchase_stock]
+llm_with_tools = llm.bind_tools(tools)
+
+# -------------------
+# 3. State
+# -------------------
+class ChatState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+
+# -------------------
+# 4. Nodes
+# -------------------
+def chat_node(state: ChatState):
+    """LLM node that may answer or request a tool call."""
+    messages = state["messages"]
+    response = llm_with_tools.invoke(messages)
+    return {"messages": [response]}
+
+tool_node = ToolNode(tools)
+
+# -------------------
+# 5. Checkpointer (in-memory)
+# -------------------
+memory = MemorySaver()
+
+# -------------------
+# 6. Graph
+# -------------------
+graph = StateGraph(ChatState)
+graph.add_node("chat_node", chat_node)
+graph.add_node("tools", tool_node)
+
+graph.add_edge(START, "chat_node")
+
+graph.add_conditional_edges("chat_node", tools_condition)
+graph.add_edge("tools", "chat_node")
+
+chatbot = graph.compile(checkpointer=memory)
+
+# -------------------
+# 7. Simple usage example (CLI with HITL)
+# -------------------
+if __name__ == "__main__":
+    
+    # Use a fixed thread_id so the conversation is persisted in memory
+    thread_id = "demo-thread"
+
+    while True:
+        user_input = input("You: ")
+        if user_input.lower().strip() in {"exit", "quit"}:
+            print("Goodbye!")
+            break
+
+        # Build initial state for this turn
+        state = {"messages": [HumanMessage(content=user_input)]}
+
+        # Run the graph (may hit an interrupt)
+        result = chatbot.invoke(
+            state,
+            config={"configurable": {"thread_id": thread_id}},
+        )
+
+        # Check for HITL interrupt from purchase_stock
+        interrupts = result.get("__interrupt__", [])
+
+        if interrupts:
+            # Our interrupt payload is the string we passed to interrupt(...)
+            prompt_to_human = interrupts[0].value
+            print(f"HITL: {prompt_to_human}")
+            decision = input("Your decision: ").strip().lower()
+
+            # Resume graph with the human decision ("yes" / "no" / whatever)
+            result = chatbot.invoke(
+                Command(resume=decision),
+                config={"configurable": {"thread_id": thread_id}},
+            )
+
+        # Get the latest message from the assistant
+        messages = result["messages"]
+        last_msg = messages[-1]
+        print(f"Bot: {last_msg.content}\n")
+
+
+8) Subgraphs-
+
+Separate
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+
+# %%
+load_dotenv()
+subgraph_llm=ChatOpenAI(model='gpt-4.1-mini')
+
+# %%
+class SubState(TypedDict):
+
+    input_text: str
+    translated_text: str
+
+# %%
+def translate_text(state: SubState):
+
+    prompt = f"""
+Translate the following text to Hindi.
+Keep it natural and clear. Do not add extra content.
+
+Text:
+{state["input_text"]}
+""".strip()
+    
+    translated_text = subgraph_llm.invoke(prompt).content
+
+    return {'translated_text': translated_text}
+
+# %%
+subgraph_builder = StateGraph(SubState)
+
+subgraph_builder.add_node('translate_text', translate_text)
+
+subgraph_builder.add_edge(START, 'translate_text')
+subgraph_builder.add_edge('translate_text', END)
+
+subgraph = subgraph_builder.compile()
+
+# %%
+class ParentState(TypedDict):
+
+    question: str
+    answer_eng: str
+    answer_hin: str
+
+# %%
+parent_llm = ChatOpenAI(model='gpt-4o-mini')
+
+# %%
+def generate_answer(state: ParentState):
+
+    answer = parent_llm.invoke(f"You are a helpful assistant. Answer clearly.\n\nQuestion: {state['question']}").content
+    return {'answer_eng': answer}
+
+# %%
+def translate_answer(state: ParentState):
+
+    # call the subgraph
+    result = subgraph.invoke({'input_text': state['answer_eng']})
+
+    return {'answer_hin': result['translated_text']}
+
+# %%
+parent_builder = StateGraph(ParentState)
+
+parent_builder.add_node("answer", generate_answer)
+parent_builder.add_node("translate", translate_answer)
+
+parent_builder.add_edge(START, 'answer')
+parent_builder.add_edge('answer', 'translate')
+parent_builder.add_edge('translate', END)
+
+# %%
+graph = parent_builder.compile()
+
+graph
+
+# %%
+graph.invoke({'question': 'What is quantum physics'})
+
+
+Shared-
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+
+# %%
+load_dotenv()
+
+# %%
+class ParentState(TypedDict):
+
+    question: str
+    answer_eng: str
+    answer_hin: str
+    
+
+# %%
+parent_llm = ChatOpenAI(model='gpt-4o-mini')
+subgraph_llm = ChatOpenAI(model='gpt-4.1-mini')
+
+# %%
+def translate_text(state: ParentState):
+
+    prompt = f"""
+Translate the following text to Hindi.
+Keep it natural and clear. Do not add extra content.
+
+Text:
+{state["answer_eng"]}
+""".strip()
+    
+    translated_text = subgraph_llm.invoke(prompt).content
+
+    return {'answer_hin': translated_text}
+
+# %%
+subgraph_builder = StateGraph(ParentState)
+
+subgraph_builder.add_node('translate_text', translate_text)
+
+subgraph_builder.add_edge(START, 'translate_text')
+subgraph_builder.add_edge('translate_text', END)
+
+subgraph = subgraph_builder.compile()
+
+# %%
+def generate_answer(state: ParentState):
+
+    answer = parent_llm.invoke(f"You are a helpful assistant. Answer clearly.\n\nQuestion: {state['question']}").content
+    return {'answer_eng': answer}
+
+# %%
+parent_builder = StateGraph(ParentState)
+
+parent_builder.add_node("answer", generate_answer)
+parent_builder.add_node("translate", subgraph)  # Main Change
+
+parent_builder.add_edge(START, 'answer')
+parent_builder.add_edge('answer', 'translate')
+parent_builder.add_edge('translate', END)
+
+# %%
+graph = parent_builder.compile()
+
+graph
+
+# %%
+graph.invoke({'question': 'What is quantum physics'})
+
+
+
+9) Short Term memory-
+Trimming
+from langgraph.graph import StateGraph, START, MessagesState
+from langgraph.checkpoint.memory import InMemorySaver
+from dotenv import load_dotenv
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages.utils import trim_messages,count_tokens_approximately
+
+# %%
+load_dotenv()
+
+# %%
+model = ChatOpenAI()
+
+# %%
+MAX_TOKENS = 150
+
+# %%
+def call_model(state: MessagesState):
+    
+    # Trim conversation history -> last N messages that fit within the token budget
+    messages = trim_messages(
+        state["messages"],
+        strategy="last",                      
+        token_counter=count_tokens_approximately,
+        max_tokens=MAX_TOKENS
+    )
+
+    print('Current Token Count ->', count_tokens_approximately(messages=messages))
+
+    for message in messages:
+        print(message.content)
+
+    response = model.invoke(messages)
+
+    return {"messages": [response]}
+
+# %%
+builder = StateGraph(MessagesState)
+builder.add_node("call_model", call_model)
+builder.add_edge(START, "call_model")
+
+# %%
+checkpointer = InMemorySaver()
+graph = builder.compile(checkpointer=checkpointer)
+
+# %%
+graph
+
+# %%
+config = {"configurable": {"thread_id": "chat-1"}}
+
+result = graph.invoke(
+    {"messages": [{"role": "user", "content": "Hi, my name is Nitish."}]},
+    config,
+)
+
+result["messages"][-1].content
+
+# %%
+result = graph.invoke(
+    {"messages": [{"role": "user", "content": "I am learning LangGraph."}]},
+    config,
+)
+
+result["messages"][-1].content
+
+# %%
+result = graph.invoke(
+    {"messages": [{"role": "user", "content": "Can you explain short term memory?"}]},
+    config,
+)
+
+result["messages"][-1].content
+
+# %%
+result = graph.invoke(
+    {"messages": [{"role": "user", "content": "What is my name?"}]},
+    config,
+)
+
+result["messages"][-1].content
+
+# %%
+for item in graph.get_state({"configurable": {"thread_id": "chat-1"}}).values['messages']:
+    print(item.content)
+    print('-'*120)
+
+
+Summarization
+from langgraph.graph import MessagesState
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, RemoveMessage
+from langgraph.graph import StateGraph, START
+from langgraph.checkpoint.memory import InMemorySaver
+
+# %%
+load_dotenv()
+
+# %%
+model = ChatOpenAI()
+
+# %%
+class ChatState(MessagesState):
+    summary: str
+
+# %%
+def summarize_conversation(state: ChatState):
+
+    existing_summary = state["summary"]
+
+    # Build summarization prompt
+    if existing_summary:
+        prompt = (
+            f"Existing summary:\n{existing_summary}\n\n"
+            "Extend the summary using the new conversation above."
+        )
+    else:
+        prompt = "Summarize the conversation above."
+
+    messages_for_summary = state["messages"] + [
+        HumanMessage(content=prompt)
+    ]
+
+    response = model.invoke(messages_for_summary)
+
+    # Keep only last 2 messages verbatim
+    messages_to_delete = state["messages"][:-2]
+
+    return {
+        "summary": response.content,
+        "messages": [RemoveMessage(id=m.id) for m in messages_to_delete],
+    }
+
+# %%
+def chat_node(state: ChatState):
+    messages = []
+
+    if state["summary"]:
+        messages.append({
+            "role": "system",
+            "content": f"Conversation summary:\n{state['summary']}"
+        })
+
+    messages.extend(state["messages"])
+
+    print(messages)
+
+    response = model.invoke(messages)
+    return {"messages": [response]}
+
+# %%
+def should_summarize(state: ChatState):
+    return len(state["messages"]) > 6
+
+# %%
+builder = StateGraph(ChatState)
+
+builder.add_node("chat", chat_node)
+builder.add_node("summarize", summarize_conversation)
+
+builder.add_edge(START, "chat")
+
+builder.add_conditional_edges(
+    "chat",
+    should_summarize,
+    {
+        True: "summarize",
+        False: "__end__",
+    }
+)
+
+builder.add_edge("summarize", "__end__")
+
+
+
+# %%
+checkpointer = InMemorySaver()
+graph = builder.compile(checkpointer=checkpointer)
+
+# %%
+graph
+
+# %%
+config = {"configurable": {"thread_id": "t1"}}
+
+def run_turn(text: str):
+    out = graph.invoke({"messages": [HumanMessage(content=text)], "summary": ""}, config=config)
+    return out
+
+# %%
+# gives the current version of the state
+def show_state():
+    snap = graph.get_state(config)
+    vals = snap.values
+    print("\n--- STATE ---")
+    print("summary:", vals.get("summary", ""))
+    print("num_messages:", len(vals.get("messages", [])))
+    print("messages:")
+    for m in vals.get("messages", []):
+        print("-", type(m).__name__, ":", m.content[:80])
+
+# %%
+run_turn('Quantum Physics')
+show_state()
+
+# %%
+run_turn('How is Albert Einstien related?')
+show_state()
+
+# %%
+run_turn('What are some of Einstien"s fampus work')
+show_state()
+
+# %%
+run_turn('Explain special theory of relativity')
+show_state()
+
+
+
+10) Long term Memory
+from dotenv import load_dotenv
+load_dotenv()
+
+import uuid
+from typing import List
+from pydantic import BaseModel, Field
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage
+from langchain_core.runnables import RunnableConfig
+
+from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.store.memory import InMemoryStore
+from langgraph.store.base import BaseStore
+
+# %%
+# ----------------------------
+# 1) LTM store (START EMPTY)
+# ----------------------------
+store = InMemoryStore()
+
+# %%
+# ----------------------------
+# 2) System prompt
+# ----------------------------
+SYSTEM_PROMPT_TEMPLATE = """You are a helpful assistant with memory capabilities.
+If user-specific memory is available, use it to personalize 
+your responses based on what you know about the user.
+
+Your goal is to provide relevant, friendly, and tailored 
+assistance that reflects the user’s preferences, context, and past interactions.
+
+If the user’s name or relevant personal context is available, always personalize your responses by:
+    – Always Address the user by name (e.g., "Sure, Nitish...") when appropriate
+    – Referencing known projects, tools, or preferences (e.g., "your MCP server python based project")
+    – Adjusting the tone to feel friendly, natural, and directly aimed at the user
+
+Avoid generic phrasing when personalization is possible.
+
+Use personalization especially in:
+    – Greetings and transitions
+    – Help or guidance tailored to tools and frameworks the user uses
+    – Follow-up messages that continue from past context
+
+Always ensure that personalization is based only on known user details and not assumed.
+
+In the end suggest 3 relevant further questions based on the current response and user profile
+
+The user’s memory (which may be empty) is provided as: {user_details_content}
+"""
+
+# %%
+# ----------------------------
+# 3) Memory extraction LLM
+# ----------------------------
+memory_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+# %%
+class MemoryItem(BaseModel):
+    text: str = Field(description="Atomic user memory")
+    is_new: bool = Field(description="True if new, false if duplicate")
+
+# %%
+class MemoryDecision(BaseModel):
+    should_write: bool
+    memories: List[MemoryItem] = Field(default_factory=list)
+
+# %%
+memory_extractor = memory_llm.with_structured_output(MemoryDecision)
+
+# %%
+MEMORY_PROMPT = """You are responsible for updating and maintaining accurate user memory.
+
+CURRENT USER DETAILS (existing memories):
+{user_details_content}
+
+TASK:
+- Review the user's latest message.
+- Extract user-specific info worth storing long-term (identity, stable preferences, ongoing projects/goals).
+- For each extracted item, set is_new=true ONLY if it adds NEW information compared to CURRENT USER DETAILS.
+- If it is basically the same meaning as something already present, set is_new=false.
+- Keep each memory as a short atomic sentence.
+- No speculation; only facts stated by the user.
+- If there is nothing memory-worthy, return should_write=false and an empty list.
+"""
+
+# %%
+# ----------------------------
+# 4) Node 1: remember
+# ----------------------------
+def remember_node(state: MessagesState, config: RunnableConfig, *, store: BaseStore):
+    user_id = config["configurable"]["user_id"]
+    ns = ("user", user_id, "details")
+
+    # existing memory
+    items = store.search(ns)
+    existing = "\n".join(it.value["data"] for it in items) if items else "(empty)"
+
+    # last user message
+    last_msg = state["messages"][-1].content
+
+    decision: MemoryDecision = memory_extractor.invoke(
+        [
+            SystemMessage(content=MEMORY_PROMPT.format(user_details_content=existing)),
+            {"role": "user", "content": last_msg},
+        ]
+    )
+
+    if decision.should_write:
+        for mem in decision.memories:
+            if mem.is_new:
+                store.put(ns, str(uuid.uuid4()), {"data": mem.text})
+
+    return {}  # no message change
+
+# %%
+# ----------------------------
+# 5) Node 2: chat
+# ----------------------------
+chat_llm = ChatOpenAI(model="gpt-4o-mini")
+
+# %%
+def chat_node(state: MessagesState, config: RunnableConfig, *, store: BaseStore):
+    user_id = config["configurable"]["user_id"]
+    ns = ("user", user_id, "details")
+
+    items = store.search(ns)
+    user_details = "\n".join(it.value["data"] for it in items) if items else ""
+
+    system_msg = SystemMessage(
+        content=SYSTEM_PROMPT_TEMPLATE.format(
+            user_details_content=user_details or "(empty)"
+        )
+    )
+
+    response = chat_llm.invoke([system_msg] + state["messages"])
+    return {"messages": [response]}
+
+# %%
+# ----------------------------
+# 6) Graph
+# ----------------------------
+builder = StateGraph(MessagesState)
+builder.add_node("remember", remember_node)
+builder.add_node("chat", chat_node)
+
+builder.add_edge(START, "remember")
+builder.add_edge("remember", "chat")
+builder.add_edge("chat", END)
+
+graph = builder.compile(store=store)
+
+graph
+
+# %%
+# ----------------------------
+# 7) Demo
+# ----------------------------
+config = {"configurable": {"user_id": "u1"}}
+
+# %%
+result = graph.invoke({"messages": [{"role": "user", "content": "Hi, my name is Nitish"}]}, config)
+result['messages'][-1].content
+
+# %%
+for it in store.search(("user", "u1", "details")):
+    print(it.value["data"])
+
+# %%
+result = graph.invoke({"messages": [{"role": "user", "content": "I teach AI on YouTube"}]}, config)
+print(result['messages'][-1].content)
+
+# %%
+for it in store.search(("user", "u1", "details")):
+    print(it.value["data"])
+
+# %%
+result = graph.invoke({"messages": [{"role": "user", "content": "Explain GenAI simply"}]}, config)
+print(result['messages'][-1].content)
+
+# %%
+for it in store.search(("user", "u1", "details")):
+    print(it.value["data"])
+
+
+11) Blog Writing Project-
+
+Backend-
+from __future__ import annotations
+
+import operator
+import os
+import re
+from datetime import date, timedelta
+from pathlib import Path
+from typing import TypedDict, List, Optional, Literal, Annotated
+
+from pydantic import BaseModel, Field
+
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ============================================================
+# Blog Writer (Router → (Research?) → Orchestrator → Workers → ReducerWithImages)
+# Patches image capability using your 3-node reducer flow:
+#   merge_content -> decide_images -> generate_and_place_images
+# ============================================================
+
+
+# -----------------------------
+# 1) Schemas
+# -----------------------------
+class Task(BaseModel):
+    id: int
+    title: str
+    goal: str = Field(..., description="One sentence describing what the reader should do/understand.")
+    bullets: List[str] = Field(..., min_length=3, max_length=6)
+    target_words: int = Field(..., description="Target words (120–550).")
+
+    tags: List[str] = Field(default_factory=list)
+    requires_research: bool = False
+    requires_citations: bool = False
+    requires_code: bool = False
+
+
+class Plan(BaseModel):
+    blog_title: str
+    audience: str
+    tone: str
+    blog_kind: Literal["explainer", "tutorial", "news_roundup", "comparison", "system_design"] = "explainer"
+    constraints: List[str] = Field(default_factory=list)
+    tasks: List[Task]
+
+
+class EvidenceItem(BaseModel):
+    title: str
+    url: str
+    published_at: Optional[str] = None  # ISO "YYYY-MM-DD" preferred
+    snippet: Optional[str] = None
+    source: Optional[str] = None
+
+
+class RouterDecision(BaseModel):
+    needs_research: bool
+    mode: Literal["closed_book", "hybrid", "open_book"]
+    reason: str
+    queries: List[str] = Field(default_factory=list)
+    max_results_per_query: int = Field(5)
+
+
+class EvidencePack(BaseModel):
+    evidence: List[EvidenceItem] = Field(default_factory=list)
+
+
+# ---- Image planning schema (ported from your image flow) ----
+class ImageSpec(BaseModel):
+    placeholder: str = Field(..., description="e.g. [[IMAGE_1]]")
+    filename: str = Field(
+        ...,
+        description=(
+            "A BARE filename only -- no slashes, no directories, e.g. "
+            "'qkv_flow.png'. It will automatically be saved under "
+            "images/<blog_slug>/."
+        ),
+    )
+    alt: str
+    caption: str
+    prompt: str = Field(..., description="Prompt to send to the image model.")
+    size: Literal["1024x1024", "1024x1536", "1536x1024"] = "1024x1024"
+    quality: Literal["low", "medium", "high"] = "medium"
+
+
+class GlobalImagePlan(BaseModel):
+    md_with_placeholders: str
+    images: List[ImageSpec] = Field(default_factory=list)
+
+class State(TypedDict):
+    topic: str
+
+    # routing / research
+    mode: str
+    needs_research: bool
+    queries: List[str]
+    evidence: List[EvidenceItem]
+    plan: Optional[Plan]
+
+    # recency
+    as_of: str
+    recency_days: int
+
+    # workers
+    sections: Annotated[List[tuple[int, str]], operator.add]  # (task_id, section_md)
+
+    # reducer/image
+    merged_md: str
+    md_with_placeholders: str
+    image_specs: List[dict]
+
+    final: str
+
+
+# -----------------------------
+# 2) LLM
+# -----------------------------
+#llm = ChatOpenAI(model="gpt-4.1-mini")
+llm = ChatOpenAI(model="gpt-5.6-luna")
+
+# -----------------------------
+# 3) Router
+# -----------------------------
+ROUTER_SYSTEM = """You are a routing module for a technical blog planner.
+
+Decide whether web research is needed BEFORE planning.
+
+Modes:
+- closed_book (needs_research=false): evergreen concepts.
+- hybrid (needs_research=true): evergreen + needs up-to-date examples/tools/models.
+- open_book (needs_research=true): volatile weekly/news/"latest"/pricing/policy.
+
+If needs_research=true:
+- Output 3–10 high-signal, scoped queries.
+- For open_book weekly roundup, include queries reflecting last 7 days.
+"""
+
+def router_node(state: State) -> dict:
+    decider = llm.with_structured_output(RouterDecision)
+    decision = decider.invoke(
+        [
+            SystemMessage(content=ROUTER_SYSTEM),
+            HumanMessage(content=f"Topic: {state['topic']}\nAs-of date: {state['as_of']}"),
+        ]
+    )
+
+    if decision.mode == "open_book":
+        recency_days = 7
+    elif decision.mode == "hybrid":
+        recency_days = 45
+    else:
+        recency_days = 3650
+
+    return {
+        "needs_research": decision.needs_research,
+        "mode": decision.mode,
+        "queries": decision.queries,
+        "recency_days": recency_days,
+    }
+
+def route_next(state: State) -> str:
+    return "research" if state["needs_research"] else "orchestrator"
+
+# -----------------------------
+# 4) Research (Tavily)
+# -----------------------------
+def _tavily_search(query: str, max_results: int = 5) -> List[dict]:
+    if not os.getenv("TAVILY_API_KEY"):
+        return []
+    try:
+        from langchain_community.tools.tavily_search import TavilySearchResults  # type: ignore
+        tool = TavilySearchResults(max_results=max_results)
+        results = tool.invoke({"query": query})
+        out: List[dict] = []
+        for r in results or []:
+            out.append(
+                {
+                    "title": r.get("title") or "",
+                    "url": r.get("url") or "",
+                    "snippet": r.get("content") or r.get("snippet") or "",
+                    "published_at": r.get("published_date") or r.get("published_at"),
+                    "source": r.get("source"),
+                }
+            )
+        return out
+    except Exception:
+        return []
+
+def _iso_to_date(s: Optional[str]) -> Optional[date]:
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s[:10])
+    except Exception:
+        return None
+
+RESEARCH_SYSTEM = """You are a research synthesizer.
+
+Given raw web search results, produce EvidenceItem objects.
+
+Rules:
+- Only include items with a non-empty url.
+- Prefer relevant + authoritative sources.
+- Normalize published_at to ISO YYYY-MM-DD if reliably inferable; else null (do NOT guess).
+- Keep snippets short.
+- Deduplicate by URL.
+"""
+
+def research_node(state: State) -> dict:
+    queries = (state.get("queries") or [])[:10]
+    raw: List[dict] = []
+    for q in queries:
+        raw.extend(_tavily_search(q, max_results=6))
+
+    if not raw:
+        return {"evidence": []}
+
+    extractor = llm.with_structured_output(EvidencePack)
+    pack = extractor.invoke(
+        [
+            SystemMessage(content=RESEARCH_SYSTEM),
+            HumanMessage(
+                content=(
+                    f"As-of date: {state['as_of']}\n"
+                    f"Recency days: {state['recency_days']}\n\n"
+                    f"Raw results:\n{raw}"
+                )
+            ),
+        ]
+    )
+
+    dedup = {}
+    for e in pack.evidence:
+        if e.url:
+            dedup[e.url] = e
+    evidence = list(dedup.values())
+
+    if state.get("mode") == "open_book":
+        as_of = date.fromisoformat(state["as_of"])
+        cutoff = as_of - timedelta(days=int(state["recency_days"]))
+        evidence = [e for e in evidence if (d := _iso_to_date(e.published_at)) and d >= cutoff]
+
+    return {"evidence": evidence}
+
+# -----------------------------
+# 5) Orchestrator (Plan)
+# -----------------------------
+ORCH_SYSTEM = """You are a senior technical writer and developer advocate.
+Produce a highly actionable outline for a technical blog post.
+
+Requirements:
+- 5–9 tasks, each with goal + 3–6 bullets + target_words.
+- Tags are flexible; do not force a fixed taxonomy.
+
+Grounding:
+- closed_book: evergreen, no evidence dependence.
+- hybrid: use evidence for up-to-date examples; mark those tasks requires_research=True and requires_citations=True.
+- open_book: weekly/news roundup:
+  - Set blog_kind="news_roundup"
+  - No tutorial content unless requested
+  - If evidence is weak, plan should explicitly reflect that (don’t invent events).
+
+Output must match Plan schema.
+"""
+
+def orchestrator_node(state: State) -> dict:
+    planner = llm.with_structured_output(Plan)
+    mode = state.get("mode", "closed_book")
+    evidence = state.get("evidence", [])
+
+    forced_kind = "news_roundup" if mode == "open_book" else None
+
+    plan = planner.invoke(
+        [
+            SystemMessage(content=ORCH_SYSTEM),
+            HumanMessage(
+                content=(
+                    f"Topic: {state['topic']}\n"
+                    f"Mode: {mode}\n"
+                    f"As-of: {state['as_of']} (recency_days={state['recency_days']})\n"
+                    f"{'Force blog_kind=news_roundup' if forced_kind else ''}\n\n"
+                    f"Evidence:\n{[e.model_dump() for e in evidence][:16]}"
+                )
+            ),
+        ]
+    )
+    if forced_kind:
+        plan.blog_kind = "news_roundup"
+
+    return {"plan": plan}
+
+
+# -----------------------------
+# 6) Fanout
+# -----------------------------
+def fanout(state: State):
+    assert state["plan"] is not None
+    return [
+        Send(
+            "worker",
+            {
+                "task": task.model_dump(),
+                "topic": state["topic"],
+                "mode": state["mode"],
+                "as_of": state["as_of"],
+                "recency_days": state["recency_days"],
+                "plan": state["plan"].model_dump(),
+                "evidence": [e.model_dump() for e in state.get("evidence", [])],
+            },
+        )
+        for task in state["plan"].tasks
+    ]
+
+# -----------------------------
+# 7) Worker
+# -----------------------------
+WORKER_SYSTEM = """You are a senior technical writer and developer advocate.
+Write ONE section of a technical blog post in Markdown.
+
+Constraints:
+- Cover ALL bullets in order.
+- Target words ±15%.
+- Output only section markdown starting with "## <Section Title>".
+
+Scope guard:
+- If blog_kind=="news_roundup", do NOT drift into tutorials (scraping/RSS/how to fetch).
+  Focus on events + implications.
+
+Grounding:
+- If mode=="open_book": do not introduce any specific event/company/model/funding/policy claim unless supported by provided Evidence URLs.
+  For each supported claim, attach a Markdown link ([Source](URL)).
+  If unsupported, write "Not found in provided sources."
+- If requires_citations==true (hybrid tasks): cite Evidence URLs for external claims.
+
+Code:
+- If requires_code==true, include at least one minimal snippet.
+
+Math:
+- Use $...$ for inline math and $$...$$ (on their own lines) for display/block math.
+- Do NOT use \( \) or \[ \] delimiters, and do not wrap math in bare parentheses or
+  square brackets -- only $ and $$ are rendered by the target Markdown viewer.
+"""
+
+def worker_node(payload: dict) -> dict:
+    task = Task(**payload["task"])
+    plan = Plan(**payload["plan"])
+    evidence = [EvidenceItem(**e) for e in payload.get("evidence", [])]
+
+    bullets_text = "\n- " + "\n- ".join(task.bullets)
+    evidence_text = "\n".join(
+        f"- {e.title} | {e.url} | {e.published_at or 'date:unknown'}"
+        for e in evidence[:20]
+    )
+
+    section_md = llm.invoke(
+        [
+            SystemMessage(content=WORKER_SYSTEM),
+            HumanMessage(
+                content=(
+                    f"Blog title: {plan.blog_title}\n"
+                    f"Audience: {plan.audience}\n"
+                    f"Tone: {plan.tone}\n"
+                    f"Blog kind: {plan.blog_kind}\n"
+                    f"Constraints: {plan.constraints}\n"
+                    f"Topic: {payload['topic']}\n"
+                    f"Mode: {payload.get('mode')}\n"
+                    f"As-of: {payload.get('as_of')} (recency_days={payload.get('recency_days')})\n\n"
+                    f"Section title: {task.title}\n"
+                    f"Goal: {task.goal}\n"
+                    f"Target words: {task.target_words}\n"
+                    f"Tags: {task.tags}\n"
+                    f"requires_research: {task.requires_research}\n"
+                    f"requires_citations: {task.requires_citations}\n"
+                    f"requires_code: {task.requires_code}\n"
+                    f"Bullets:{bullets_text}\n\n"
+                    f"Evidence (ONLY cite these URLs):\n{evidence_text}\n"
+                )
+            ),
+        ]
+    ).content.strip()
+
+    return {"sections": [(task.id, section_md)]}
+
+# ============================================================
+# 8) ReducerWithImages (subgraph)
+#    merge_content -> decide_images -> generate_and_place_images
+# ============================================================
+def merge_content(state: State) -> dict:
+    plan = state["plan"]
+    if plan is None:
+        raise ValueError("merge_content called without plan.")
+    ordered_sections = [md for _, md in sorted(state["sections"], key=lambda x: x[0])]
+    body = "\n\n".join(ordered_sections).strip()
+    merged_md = f"# {plan.blog_title}\n\n{body}\n"
+    return {"merged_md": merged_md}
+
+
+DECIDE_IMAGES_SYSTEM = """You are an expert technical editor.
+Decide if images/diagrams are needed for THIS blog.
+
+Rules:
+- Max 3 images total.
+- Each image must materially improve understanding (diagram/flow/table-like visual).
+- Insert placeholders exactly: [[IMAGE_1]], [[IMAGE_2]], [[IMAGE_3]].
+- If no images needed: md_with_placeholders must equal input and images=[].
+- Avoid decorative images; prefer technical diagrams with short labels.
+- filename must be a BARE filename with no slashes or directories (e.g.
+  "qkv_flow.png"), never something like "images/foo/bar.png".
+Return strictly GlobalImagePlan.
+"""
+
+def decide_images(state: State) -> dict:
+    planner = llm.with_structured_output(GlobalImagePlan)
+    merged_md = state["merged_md"]
+    plan = state["plan"]
+    assert plan is not None
+
+    image_plan = planner.invoke(
+        [
+            SystemMessage(content=DECIDE_IMAGES_SYSTEM),
+            HumanMessage(
+                content=(
+                    f"Blog kind: {plan.blog_kind}\n"
+                    f"Topic: {state['topic']}\n\n"
+                    "Insert placeholders + propose image prompts.\n\n"
+                    f"{merged_md}"
+                )
+            ),
+        ]
+    )
+
+    return {
+        "md_with_placeholders": image_plan.md_with_placeholders,
+        "image_specs": [img.model_dump() for img in image_plan.images],
+    }
+
+
+
+
+def _openai_generate_image_bytes(
+    prompt: str,
+    size: str = "1024x1024",
+    quality: str = "medium",
+) -> bytes:
+    """
+    Generate an image using OpenAI and return the raw PNG bytes.
+    """
+    from openai import OpenAI
+    import base64
+
+    client = OpenAI()
+    result = client.images.generate(
+        model="gpt-image-2",
+        prompt=prompt,
+        size=size,
+        quality=quality,
+    )
+
+    # The API returns base64-encoded image data
+    image_b64 = result.data[0].b64_json
+    return base64.b64decode(image_b64)
+
+
+def _safe_slug(title: str) -> str:
+    s = title.strip().lower()
+    s = re.sub(r"[^a-z0-9 _-]+", "", s)
+    s = re.sub(r"\s+", "_", s).strip("_")
+    return s or "blog"
+
+
+def _safe_filename(name: str) -> str:
+    """
+    ImageSpec.filename is supposed to be a bare filename (e.g. "qkv_flow.png"),
+    but the image-planning LLM can return something that looks like a
+    relative path instead (e.g. "images/self_attention/qkv_flow.png"). Using
+    that directly as `images_dir / filename` silently builds a path whose
+    parent directories don't exist, so writing the generated PNG bytes fails
+    with "No such file or directory" -- which is exactly what left the
+    images folder empty and every image showing "[IMAGE GENERATION FAILED]".
+
+    Defend against this by taking only the basename and slugifying it, while
+    keeping a sane image extension.
+    """
+    base = os.path.basename(name.replace("\\", "/"))
+    stem, ext = os.path.splitext(base)
+    stem = re.sub(r"[^a-zA-Z0-9_-]+", "_", stem).strip("_") or "image"
+    ext = ext.lower() if ext.lower() in (".png", ".jpg", ".jpeg", ".webp") else ".png"
+    return f"{stem}{ext}"
+
+
+def generate_and_place_images(state: State) -> dict:
+    plan = state["plan"]
+    assert plan is not None
+
+    blog_slug = _safe_slug(plan.blog_title)
+    md = state.get("md_with_placeholders") or state["merged_md"]
+    image_specs = state.get("image_specs", []) or []
+
+    # If no images requested, just write merged markdown
+    if not image_specs:
+        filename = f"{blog_slug}.md"
+        Path(filename).write_text(md, encoding="utf-8")
+        return {"final": md}
+
+    # NOTE: images are namespaced under images/<blog_slug>/ so that two
+    # different blog runs can never collide on a filename and silently
+    # overwrite each other's pictures (this previously could corrupt an
+    # older, already-saved blog's images when a new blog was generated
+    # later and happened to reuse a similar image filename).
+    images_dir = Path("images") / blog_slug
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    for spec in image_specs:
+        placeholder = spec["placeholder"]
+        filename = _safe_filename(spec["filename"])
+        out_path = images_dir / filename
+        rel_path = f"images/{blog_slug}/{filename}"
+
+        # generate only if needed
+        if not out_path.exists():
+            try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)  # defensive
+                img_bytes = _openai_generate_image_bytes(
+                    spec["prompt"],
+                    size=spec.get("size", "1024x1024"),
+                    quality=spec.get("quality", "medium"),
+                )
+                out_path.write_bytes(img_bytes)
+            except Exception as e:
+                # graceful fallback: keep doc usable
+                prompt_block = (
+                    f"> **[IMAGE GENERATION FAILED]** {spec.get('caption','')}\n>\n"
+                    f"> **Alt:** {spec.get('alt','')}\n>\n"
+                    f"> **Prompt:** {spec.get('prompt','')}\n>\n"
+                    f"> **Error:** {e}\n"
+                )
+                md = md.replace(placeholder, prompt_block)
+                continue
+
+        img_md = f"![{spec['alt']}]({rel_path})\n*{spec['caption']}*"
+        md = md.replace(placeholder, img_md)
+
+    filename = f"{blog_slug}.md"
+    Path(filename).write_text(md, encoding="utf-8")
+    return {"final": md}
+
+# build reducer subgraph
+reducer_graph = StateGraph(State)
+reducer_graph.add_node("merge_content", merge_content)
+reducer_graph.add_node("decide_images", decide_images)
+reducer_graph.add_node("generate_and_place_images", generate_and_place_images)
+reducer_graph.add_edge(START, "merge_content")
+reducer_graph.add_edge("merge_content", "decide_images")
+reducer_graph.add_edge("decide_images", "generate_and_place_images")
+reducer_graph.add_edge("generate_and_place_images", END)
+reducer_subgraph = reducer_graph.compile()
+
+# -----------------------------
+# 9) Build main graph
+# -----------------------------
+g = StateGraph(State)
+g.add_node("router", router_node)
+g.add_node("research", research_node)
+g.add_node("orchestrator", orchestrator_node)
+g.add_node("worker", worker_node)
+g.add_node("reducer", reducer_subgraph)
+
+g.add_edge(START, "router")
+g.add_conditional_edges("router", route_next, {"research": "research", "orchestrator": "orchestrator"})
+g.add_edge("research", "orchestrator")
+
+g.add_conditional_edges("orchestrator", fanout, ["worker"])
+g.add_edge("worker", "reducer")
+g.add_edge("reducer", END)
+
+app = g.compile()
+
+Frontend-
+from __future__ import annotations
+
+import json
+import os
+import re
+import zipfile
+from datetime import date
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, Optional, List, Iterator, Tuple
+
+import pandas as pd
+import streamlit as st
+
+# -----------------------------
+# Import your compiled LangGraph app
+# -----------------------------
+from bwa_backend import app
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+def safe_slug(title: str) -> str:
+    s = title.strip().lower()
+    s = re.sub(r"[^a-z0-9 _-]+", "", s)
+    s = re.sub(r"\s+", "_", s).strip("_")
+    return s or "blog"
+
+
+def bundle_zip(md_text: str, md_filename: str, images_dir: Path) -> bytes:
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr(md_filename, md_text.encode("utf-8"))
+
+        if images_dir.exists() and images_dir.is_dir():
+            for p in images_dir.rglob("*"):
+                if p.is_file():
+                    z.write(p, arcname=str(p))
+    return buf.getvalue()
+
+
+def images_zip(images_dir: Path) -> Optional[bytes]:
+    if not images_dir.exists() or not images_dir.is_dir():
+        return None
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        for p in images_dir.rglob("*"):
+            if p.is_file():
+                z.write(p, arcname=str(p))
+    return buf.getvalue()
+
+
+def merge_update(current_state: Dict[str, Any], update_payload: Any) -> Dict[str, Any]:
+    """
+    Merge one `stream_mode="updates"` payload into the accumulated state.
+
+    A payload looks like {node_name: {key: value, ...}, ...} and CAN contain
+    more than one node when several nodes finish in the same superstep (e.g.
+    parallel `worker` fan-out). The previous version of this helper only
+    handled the single-key case and, for multi-key payloads, merged the
+    node-name-keyed dict straight into state -- silently corrupting state
+    during fan-out.
+
+    `sections` is special-cased because it uses an `operator.add` reducer
+    inside the graph: each worker only returns its own delta, so we need to
+    append rather than overwrite.
+    """
+    if not isinstance(update_payload, dict):
+        return current_state
+
+    for _node_name, node_update in update_payload.items():
+        if not isinstance(node_update, dict):
+            continue
+        for k, v in node_update.items():
+            if k == "sections" and isinstance(v, list):
+                current_state["sections"] = (current_state.get("sections") or []) + v
+            else:
+                current_state[k] = v
+    return current_state
+
+
+def try_stream(graph_app, inputs: Dict[str, Any]) -> Iterator[Tuple[str, Any]]:
+    """
+    Stream graph progress and yield the final state exactly once.
+
+    IMPORTANT: the graph must run exactly ONCE. The previous implementation
+    fully drained `.stream(...)` and then called `.invoke(...)` again on the
+    same inputs -- running the entire graph (all LLM calls, image
+    generation, and file writes) a second time. That produced duplicate
+    LangSmith traces and duplicate output files/images.
+    """
+    accumulated: Dict[str, Any] = dict(inputs)
+    started_streaming = False
+    try:
+        for step in graph_app.stream(inputs, stream_mode="updates"):
+            started_streaming = True
+            yield ("updates", step)
+            merge_update(accumulated, step)
+    except Exception:
+        if started_streaming:
+            # Streaming began but failed partway through. Re-running the
+            # whole graph via invoke() here would duplicate side effects
+            # (LLM calls, image generation, file writes) that already
+            # happened, so surface the failure instead of silently retrying.
+            raise
+        # Streaming isn't supported at all in this environment -- fall back
+        # to a single invoke() call. This is still only ONE graph execution.
+        out = graph_app.invoke(inputs)
+        yield ("final", out)
+        return
+
+    yield ("final", accumulated)
+
+
+# -----------------------------
+# Markdown renderer that supports local images
+# -----------------------------
+_MD_IMG_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
+_CAPTION_LINE_RE = re.compile(r"^\*(?P<cap>.+)\*$")
+_INLINE_MATH_RE = re.compile(r"\\\((.+?)\\\)", re.DOTALL)
+_DISPLAY_MATH_RE = re.compile(r"\\\[(.+?)\\\]", re.DOTALL)
+
+
+def _normalize_latex_delimiters(md: str) -> str:
+    """
+    The worker LLM sometimes (or, for older saved blogs, always) writes math
+    using ChatGPT-style \\( \\) / \\[ \\] delimiters. Streamlit's markdown
+    renderer only auto-renders $ ... $ and $$ ... $$ -- and Markdown treats a
+    lone "\\(" as an escaped "(", so the backslash silently disappears,
+    leaving literal parentheses/brackets full of raw LaTeX on screen.
+    Convert both delimiter styles to $ / $$ before rendering.
+    """
+    md = _DISPLAY_MATH_RE.sub(lambda m: f"$$\n{m.group(1).strip()}\n$$", md)
+    md = _INLINE_MATH_RE.sub(lambda m: f"${m.group(1).strip()}$", md)
+    return md
+
+
+def _resolve_image_path(src: str) -> Path:
+    src = src.strip().lstrip("./")
+    return Path(src).resolve()
+
+
+def render_markdown_with_local_images(md: str):
+    try:
+        md = _normalize_latex_delimiters(md)
+        matches = list(_MD_IMG_RE.finditer(md))
+        if not matches:
+            st.markdown(md, unsafe_allow_html=False)
+            return
+
+        parts: List[Tuple[str, str]] = []
+        last = 0
+        for m in matches:
+            before = md[last : m.start()]
+            if before:
+                parts.append(("md", before))
+
+            alt = (m.group("alt") or "").strip()
+            src = (m.group("src") or "").strip()
+            parts.append(("img", f"{alt}|||{src}"))
+            last = m.end()
+
+        tail = md[last:]
+        if tail:
+            parts.append(("md", tail))
+
+        i = 0
+        while i < len(parts):
+            kind, payload = parts[i]
+
+            if kind == "md":
+                st.markdown(payload, unsafe_allow_html=False)
+                i += 1
+                continue
+
+            alt, src = payload.split("|||", 1)
+
+            caption = None
+            if i + 1 < len(parts) and parts[i + 1][0] == "md":
+                nxt = parts[i + 1][1].lstrip()
+                if nxt.strip():
+                    first_line = nxt.splitlines()[0].strip()
+                    mcap = _CAPTION_LINE_RE.match(first_line)
+                    if mcap:
+                        caption = mcap.group("cap").strip()
+                        rest = "\n".join(nxt.splitlines()[1:])
+                        parts[i + 1] = ("md", rest)
+
+            if src.startswith("http://") or src.startswith("https://"):
+                st.image(src, caption=caption or (alt or None), use_container_width=True)
+            else:
+                img_path = _resolve_image_path(src)
+                if img_path.exists():
+                    st.image(str(img_path), caption=caption or (alt or None), use_container_width=True)
+                else:
+                    st.warning(f"Image not found: `{src}` (looked for `{img_path}`)")
+
+            i += 1
+    except Exception as e:
+        # Never let a rendering hiccup produce a silently blank tab -- always
+        # surface what went wrong, and still dump the raw markdown so the
+        # content isn't lost.
+        st.error(f"Couldn't fully render this blog's markdown: {e}")
+        st.text_area("Raw markdown", value=md, height=400)
+
+
+# -----------------------------
+# Past blogs helpers
+# -----------------------------
+def list_past_blogs() -> List[Path]:
+    """
+    Returns .md files in current working directory, newest first.
+    """
+    cwd = Path(".")
+    files = [p for p in cwd.glob("*.md") if p.is_file()]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return files
+
+
+def read_md_file(p: Path) -> str:
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def extract_title_from_md(md: str, fallback: str) -> str:
+    """
+    Use first '# ' heading as title if present.
+    """
+    for line in md.splitlines():
+        if line.startswith("# "):
+            t = line[2:].strip()
+            return t or fallback
+    return fallback
+
+
+# -----------------------------
+# Streamlit UI
+# -----------------------------
+st.set_page_config(page_title="LangGraph Blog Writer", layout="wide")
+
+st.title("Blog Writing Agent")
+
+# Apply any pending "prefill topic" request BEFORE the topic widget is
+# created -- Streamlit only respects session_state for a widget's key if
+# it's set prior to instantiating that widget. Previously this was set
+# *after* the widget already existed each run, so it silently did nothing.
+if "topic_prefill" in st.session_state:
+    st.session_state["topic_input"] = st.session_state.pop("topic_prefill")
+
+with st.sidebar:
+    st.header("Generate New Blog")
+    topic = st.text_area(
+        "Topic",
+        height=120,
+        key="topic_input",
+    )
+    as_of = st.date_input("As-of date", value=date.today(), key="as_of_input")
+    run_btn = st.button("🚀 Generate Blog", type="primary", key="generate_btn")
+
+    st.divider()
+    st.subheader("Past blogs")
+
+    past_files = list_past_blogs()
+    if not past_files:
+        st.caption("No saved blogs found (*.md in current folder).")
+        selected_md_file = None
+    else:
+        options: List[str] = []
+        file_by_label: Dict[str, Path] = {}
+        for p in past_files[:50]:
+            try:
+                md_text = read_md_file(p)
+                title = extract_title_from_md(md_text, p.stem)
+            except Exception:
+                title = p.stem
+            label = f"{title}  ·  {p.name}"
+            options.append(label)
+            file_by_label[label] = p
+
+        selected_label = st.radio(
+            "Select a blog to load",
+            options=options,
+            index=0,
+            label_visibility="collapsed",
+            key="past_blog_radio",
+        )
+        selected_md_file = file_by_label.get(selected_label)
+
+        if st.button("📂 Load selected blog", key="load_blog_btn"):
+            if selected_md_file:
+                md_text = read_md_file(selected_md_file)
+                title = extract_title_from_md(md_text, selected_md_file.stem)
+                st.session_state["last_out"] = {
+                    "plan": None,          # old files don't include plan
+                    "evidence": [],        # old files don't include evidence
+                    "image_specs": [],     # not persisted for past blogs
+                    "final": md_text,      # markdown body
+                    "blog_slug": safe_slug(title),  # for scoping the images/ subfolder
+                }
+                st.session_state["topic_prefill"] = title
+                # Force a clean rerun so every tab reflects the freshly
+                # loaded blog immediately, instead of relying on
+                # mid-script session_state mutation to propagate.
+                st.rerun()
+            else:
+                st.warning("No blog selected.")
+
+# Storage for latest run
+if "last_out" not in st.session_state:
+    st.session_state["last_out"] = None
+
+# Layout
+tab_plan, tab_evidence, tab_preview, tab_images, tab_logs = st.tabs(
+    ["🧩 Plan", "🔎 Evidence", "📝 Markdown Preview", "🖼️ Images", "🧾 Logs"]
+)
+
+logs: List[str] = []
+
+
+def log(msg: str):
+    logs.append(msg)
+
+
+if run_btn:
+    if not topic.strip():
+        st.warning("Please enter a topic.")
+        st.stop()
+
+    inputs: Dict[str, Any] = {
+        "topic": topic.strip(),
+        "mode": "",
+        "needs_research": False,
+        "queries": [],
+        "evidence": [],
+        "plan": None,
+        "as_of": as_of.isoformat(),
+        "recency_days": 7,
+        "sections": [],
+        "merged_md": "",
+        "md_with_placeholders": "",
+        "image_specs": [],
+        "final": "",
+    }
+
+    status = st.status("Running graph…", expanded=True)
+    progress_area = st.empty()
+
+    current_state: Dict[str, Any] = {}
+    last_nodes_seen: List[str] = []
+
+    for kind, payload in try_stream(app, inputs):
+        if kind == "updates":
+            node_names = [k for k, v in payload.items() if isinstance(v, dict)] if isinstance(payload, dict) else []
+            for node_name in node_names:
+                if node_name not in last_nodes_seen[-1:]:
+                    status.write(f"➡️ Node: `{node_name}`")
+                    last_nodes_seen.append(node_name)
+
+            merge_update(current_state, payload)
+
+            summary = {
+                "mode": current_state.get("mode"),
+                "needs_research": current_state.get("needs_research"),
+                "queries": current_state.get("queries", [])[:5] if isinstance(current_state.get("queries"), list) else [],
+                "evidence_count": len(current_state.get("evidence", []) or []),
+                "tasks": len((current_state.get("plan") or {}).get("tasks", [])) if isinstance(current_state.get("plan"), dict) else None,
+                "images": len(current_state.get("image_specs", []) or []),
+                "sections_done": len(current_state.get("sections", []) or []),
+            }
+            progress_area.json(summary)
+
+            log(f"[updates] {json.dumps(payload, default=str)[:1200]}")
+
+        elif kind == "final":
+            out = payload
+            plan_obj = out.get("plan")
+            blog_title = getattr(plan_obj, "blog_title", None) or (
+                plan_obj.get("blog_title") if isinstance(plan_obj, dict) else None
+            )
+            if not blog_title:
+                blog_title = extract_title_from_md(out.get("final") or "", topic.strip() or "blog")
+            out["blog_slug"] = safe_slug(blog_title)
+
+            st.session_state["last_out"] = out
+            status.update(label="✅ Done", state="complete", expanded=False)
+            log("[final] received final state")
+
+    # Refresh the whole page: this ensures the "Past blogs" sidebar list
+    # immediately includes the file we just wrote (it's computed once near
+    # the top of the script, before generation happens, so without this
+    # rerun it would stay stale until some other interaction triggered it).
+    st.rerun()
+
+# Render last result (if any)
+out = st.session_state.get("last_out")
+if out:
+    blog_slug = out.get("blog_slug") or safe_slug(
+        extract_title_from_md(out.get("final") or "", "blog")
+    )
+    images_dir = Path("images") / blog_slug
+
+    # --- Plan tab ---
+    with tab_plan:
+        st.subheader("Plan")
+        plan_obj = out.get("plan")
+        if not plan_obj:
+            st.info("No plan found in output (this blog was loaded from a saved file, which doesn't store the plan).")
+        else:
+            if hasattr(plan_obj, "model_dump"):
+                plan_dict = plan_obj.model_dump()
+            elif isinstance(plan_obj, dict):
+                plan_dict = plan_obj
+            else:
+                plan_dict = json.loads(json.dumps(plan_obj, default=str))
+
+            st.write("**Title:**", plan_dict.get("blog_title"))
+            cols = st.columns(3)
+            cols[0].write("**Audience:** " + str(plan_dict.get("audience")))
+            cols[1].write("**Tone:** " + str(plan_dict.get("tone")))
+            cols[2].write("**Blog kind:** " + str(plan_dict.get("blog_kind", "")))
+
+            tasks = plan_dict.get("tasks", [])
+            if tasks:
+                df = pd.DataFrame(
+                    [
+                        {
+                            "id": t.get("id"),
+                            "title": t.get("title"),
+                            "target_words": t.get("target_words"),
+                            "requires_research": t.get("requires_research"),
+                            "requires_citations": t.get("requires_citations"),
+                            "requires_code": t.get("requires_code"),
+                            "tags": ", ".join(t.get("tags") or []),
+                        }
+                        for t in tasks
+                    ]
+                ).sort_values("id")
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+                with st.expander("Task details"):
+                    st.json(tasks)
+
+    # --- Evidence tab ---
+    with tab_evidence:
+        st.subheader("Evidence")
+        evidence = out.get("evidence") or []
+        if not evidence:
+            st.info("No evidence returned (maybe closed_book mode, a loaded saved blog, or no Tavily key/results).")
+        else:
+            rows = []
+            for e in evidence:
+                if hasattr(e, "model_dump"):
+                    e = e.model_dump()
+                rows.append(
+                    {
+                        "title": e.get("title"),
+                        "published_at": e.get("published_at"),
+                        "source": e.get("source"),
+                        "url": e.get("url"),
+                    }
+                )
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # --- Preview tab ---
+    with tab_preview:
+        st.subheader("Markdown Preview")
+        final_md = out.get("final") or ""
+        if not final_md:
+            st.warning("No final markdown found.")
+        else:
+            render_markdown_with_local_images(final_md)
+
+            plan_obj = out.get("plan")
+            if hasattr(plan_obj, "blog_title"):
+                blog_title = plan_obj.blog_title
+            elif isinstance(plan_obj, dict) and plan_obj.get("blog_title"):
+                blog_title = plan_obj.get("blog_title")
+            else:
+                blog_title = extract_title_from_md(final_md, "blog")
+
+            md_filename = f"{safe_slug(blog_title)}.md"
+            st.download_button(
+                "⬇️ Download Markdown",
+                data=final_md.encode("utf-8"),
+                file_name=md_filename,
+                mime="text/markdown",
+                key="download_md_btn",
+            )
+
+            bundle = bundle_zip(final_md, md_filename, images_dir)
+            st.download_button(
+                "📦 Download Bundle (MD + images)",
+                data=bundle,
+                file_name=f"{safe_slug(blog_title)}_bundle.zip",
+                mime="application/zip",
+                key="download_bundle_btn",
+            )
+
+    # --- Images tab ---
+    with tab_images:
+        st.subheader("Images")
+        specs = out.get("image_specs") or []
+
+        if not specs and not images_dir.exists():
+            st.info("No images generated for this blog.")
+        else:
+            if specs:
+                st.write("**Image plan:**")
+                st.json(specs)
+
+            if images_dir.exists():
+                files = [p for p in images_dir.iterdir() if p.is_file()]
+                if not files:
+                    st.warning(f"`{images_dir}/` exists but is empty.")
+                else:
+                    for p in sorted(files):
+                        st.image(str(p), caption=p.name, use_container_width=True)
+
+                z = images_zip(images_dir)
+                if z:
+                    st.download_button(
+                        "⬇️ Download Images (zip)",
+                        data=z,
+                        file_name=f"{blog_slug}_images.zip",
+                        mime="application/zip",
+                        key="download_images_btn",
+                    )
+            else:
+                st.info("No images generated for this blog.")
+
+    # --- Logs tab ---
+    with tab_logs:
+        st.subheader("Logs")
+        if "logs" not in st.session_state:
+            st.session_state["logs"] = []
+        if logs:
+            st.session_state["logs"].extend(logs)
+
+        st.text_area("Event log", value="\n\n".join(st.session_state["logs"][-80:]), height=520, key="logs_area")
+else:
+    st.info("Enter a topic and click **Generate Blog**.")

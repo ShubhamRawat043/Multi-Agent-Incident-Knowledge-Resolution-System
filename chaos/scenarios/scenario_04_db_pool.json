@@ -1,0 +1,16 @@
+{
+  "id": "scenario_04_db_pool",
+  "description": "DB connection pool exhaustion — no recent deploy",
+  "level": 2,
+  "expected_root_cause": "db connection pool exhaustion",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "db_pool_exhaustion"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 14.50},
+    "count": 6
+  },
+  "settle_seconds": 1
+}

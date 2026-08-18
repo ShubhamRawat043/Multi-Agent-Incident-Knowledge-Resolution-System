@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: orders-api
+    static_configs:
+      - targets: ["orders-api:8000"]
+        labels:
+          service: orders-api
+
+  - job_name: payments-api
+    static_configs:
+      - targets: ["payments-api:8000"]
+        labels:
+          service: payments-api
+
+  - job_name: host-orders
+    static_configs:
+      - targets: ["host.docker.internal:8001"]
+        labels:
+          service: orders-api
+
+  - job_name: host-payments
+    static_configs:
+      - targets: ["host.docker.internal:8002"]
+        labels:
+          service: payments-api

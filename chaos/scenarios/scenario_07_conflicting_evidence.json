@@ -1,0 +1,16 @@
+{
+  "id": "scenario_07_conflicting_evidence",
+  "description": "Conflicting signals: bad_deploy + latency (multi-agent disagreement)",
+  "level": 3,
+  "expected_root_cause": "bad deployment (CPU/latency are symptoms)",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "bad_deploy"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 22.00},
+    "count": 8
+  },
+  "settle_seconds": 2
+}

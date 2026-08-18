@@ -1,0 +1,16 @@
+{
+  "id": "scenario_01_exception",
+  "description": "Application exception in payments-api",
+  "level": 1,
+  "expected_root_cause": "application exception",
+  "targets": [
+    {"service_url": "http://localhost:8002", "fault": "exception"}
+  ],
+  "traffic": {
+    "url": "http://localhost:8001/orders",
+    "method": "POST",
+    "json": {"item": "widget", "amount": 19.99},
+    "count": 3
+  },
+  "settle_seconds": 1
+}
