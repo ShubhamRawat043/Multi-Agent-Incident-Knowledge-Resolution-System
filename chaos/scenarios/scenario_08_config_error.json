@@ -3,13 +3,27 @@
   "description": "Configuration mismatch after deployment",
   "level": 2,
   "expected_root_cause": "configuration error",
+  "incident": {
+    "source": "chaos",
+    "service": "payments-api",
+    "kind": "error",
+    "title": "payments-api configuration mismatch after v1.8 rollout",
+    "stacktrace": "Traceback (most recent call last):\n  File \"/app/payments_api/main.py\", line 52, in pay\nValueError: [payments-api] Configuration mismatch: invalid DATABASE_URL / API key",
+    "deploy_tag": "v1.8"
+  },
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "config_error"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "config_error"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 5.00},
+    "json": {
+      "item": "widget",
+      "amount": 5.0
+    },
     "count": 3
   },
   "settle_seconds": 1

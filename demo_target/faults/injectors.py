@@ -2,15 +2,54 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
-# Shared process-local fault state (can also be driven by FAULT_MODE env)
+# Fault state is persisted outside the process so a container restart does not
+# silently cure every fault (which would make "restart didn't help" impossible).
+# `docker restart` keeps the writable layer, so a file under /tmp survives it.
+_STATE_PATH = Path(
+    os.getenv("FAULT_STATE_PATH", str(Path(tempfile.gettempdir()) / "incident_fault_mode"))
+)
+
+# Faults a restart genuinely cures: their damage is leaked in-process resources,
+# which the fresh process no longer holds. Code/config faults survive a restart
+# because the bad release is still the one running.
+RESTART_CLEARED_FAULTS = {"db_pool_exhaustion", "memory_leak"}
+
+# ~500 MB ceiling on the simulated leak.
+MEMORY_BALLAST_MAX_CHUNKS = int(os.getenv("FAULT_MEMORY_MAX_CHUNKS", "100"))
+
 _fault_lock = threading.Lock()
-_active_fault: str = os.getenv("FAULT_MODE", "none")
 _leaked_connections: list = []
 _memory_ballast: list = []
+
+
+def _persist(mode: str) -> None:
+    try:
+        _STATE_PATH.write_text(mode, encoding="utf-8")
+    except Exception:
+        # Demo must still run on a read-only or unusual filesystem
+        pass
+
+
+def _load_persisted_fault() -> str:
+    try:
+        mode = _STATE_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return os.getenv("FAULT_MODE", "none") or "none"
+    if not mode or mode in RESTART_CLEARED_FAULTS:
+        # This process is fresh, so the leaked resources are gone with it.
+        _persist("none")
+        return "none"
+    return mode
+
+
+_active_fault: str = _load_persisted_fault()
+os.environ["FAULT_MODE"] = _active_fault
 
 
 def get_fault() -> str:
@@ -23,15 +62,19 @@ def set_fault(mode: str) -> str:
     with _fault_lock:
         _active_fault = mode
         os.environ["FAULT_MODE"] = mode
+        _persist(mode)
         return _active_fault
 
 
 def clear_fault() -> str:
-    global _leaked_connections, _memory_ballast
+    global _active_fault, _leaked_connections, _memory_ballast
     with _fault_lock:
         _leaked_connections = []
         _memory_ballast = []
-        return set_fault("none")
+        _active_fault = "none"
+        os.environ["FAULT_MODE"] = _active_fault
+        _persist(_active_fault)
+        return _active_fault
 
 
 def apply_fault(service: str = "") -> Optional[Exception]:
@@ -68,8 +111,9 @@ def apply_fault(service: str = "") -> Optional[Exception]:
         )
 
     if mode == "memory_leak":
-        # Continuously allocate ~5MB
-        _memory_ballast.append(bytearray(5 * 1024 * 1024))
+        # Continuously allocate ~5MB, up to a bounded ceiling
+        if len(_memory_ballast) < MEMORY_BALLAST_MAX_CHUNKS:
+            _memory_ballast.append(bytearray(5 * 1024 * 1024))
         return None
 
     if mode == "config_error":

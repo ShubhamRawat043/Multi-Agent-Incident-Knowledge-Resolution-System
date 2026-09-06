@@ -2,12 +2,20 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Any
 
 import httpx
 import streamlit as st
 
-from agent.config import settings
+# `streamlit run ui/streamlit_app.py` puts ui/ on sys.path, not the project
+# root, so the project packages are not importable without this.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agent.config import settings  # noqa: E402
 
 INGESTION = settings.ingestion_url.rstrip("/")
 

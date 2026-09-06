@@ -1,15 +1,28 @@
 {
   "id": "scenario_05_dependency_failure",
-  "description": "payments-api unavailable → cascading orders failure",
+  "description": "payments-api unavailable \u2192 cascading orders failure",
   "level": 2,
   "expected_root_cause": "dependency failure",
+  "incident": {
+    "source": "chaos",
+    "service": "orders-api",
+    "kind": "error",
+    "title": "orders-api 503s - upstream payments-api unreachable",
+    "stacktrace": "Traceback (most recent call last):\n  File \"/app/orders_api/main.py\", line 58, in create_order\nConnectionError: [payments-api] Upstream dependency unavailable"
+  },
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "dependency_failure"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "dependency_failure"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 11.00},
+    "json": {
+      "item": "widget",
+      "amount": 11.0
+    },
     "count": 5
   },
   "settle_seconds": 1

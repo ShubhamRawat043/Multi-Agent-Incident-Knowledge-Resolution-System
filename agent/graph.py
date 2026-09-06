@@ -110,6 +110,7 @@ def initial_state(incident_id: str, event: dict) -> IncidentState:
         "critic_rounds": 0,
         "critic_feedback": "",
         "executed_actions": [],
+        "last_executed_actions": [],
         "audit_log": [],
         "next_action": "investigate",
         "confidence": 0.0,

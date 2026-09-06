@@ -1,4 +1,4 @@
-"""Verification agent — re-query real Prometheus / health endpoints."""
+"""Verification agent — drive real traffic, then re-query health / Prometheus."""
 from __future__ import annotations
 
 from typing import Any
@@ -9,6 +9,10 @@ from agent.config import settings
 from agent.state import IncidentState, VerificationResult
 from tools.prometheus_tools import get_service_error_rate
 
+PROBE_COUNT = 4
+PROBE_TIMEOUT = 10.0
+RECOVERED_ERROR_RATE = 0.1
+
 
 def _health(url: str) -> dict:
     try:
@@ -17,6 +21,53 @@ def _health(url: str) -> dict:
             return {"ok": resp.status_code == 200, "body": resp.json()}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def _probe(service: str, url: str) -> dict:
+    """
+    Send a few real requests through the business endpoint.
+
+    /health is a static 200 and the Prometheus error-rate gauge only moves when
+    a request hits /pay or /orders, so without this the post-remediation
+    metrics are whatever the incident left behind.
+    """
+    if "payment" in service:
+        path = "/pay"
+        body = {"order_id": "verify-probe", "amount": 1.0, "currency": "USD"}
+    else:
+        path = "/orders"
+        body = {"item": "verify-probe", "amount": 1.0, "currency": "USD"}
+
+    sent = 0
+    failed = 0
+    errors: list[str] = []
+    try:
+        with httpx.Client(timeout=PROBE_TIMEOUT) as client:
+            for _ in range(PROBE_COUNT):
+                sent += 1
+                try:
+                    resp = client.post(f"{url.rstrip('/')}{path}", json=body)
+                    if resp.status_code >= 500:
+                        failed += 1
+                        errors.append(f"HTTP {resp.status_code}: {resp.text[:120]}")
+                except Exception as exc:
+                    failed += 1
+                    errors.append(f"{type(exc).__name__}: {exc}")
+    except Exception as exc:
+        return {
+            "sent": sent,
+            "failed": failed,
+            "error_rate": None,
+            "detail": f"probe unavailable: {exc}",
+            "errors": errors[:3],
+        }
+
+    return {
+        "sent": sent,
+        "failed": failed,
+        "error_rate": (failed / sent) if sent else None,
+        "errors": errors[:3],
+    }
 
 
 def _extract_error_rate(prom_result: dict) -> float | None:
@@ -41,45 +92,60 @@ def verification_node(state: IncidentState) -> dict[str, Any]:
         else settings.orders_api_url
     )
 
+    probe = _probe(service, url)
     health = _health(url)
     prom = get_service_error_rate.invoke({"service": service})
-    err = _extract_error_rate(prom if isinstance(prom, dict) else {})
+    prom_err = _extract_error_rate(prom if isinstance(prom, dict) else {})
+    probe_err = probe.get("error_rate")
 
-    # Also clear-fault success path: if actions included rollback/restart and health ok
-    actions = state.get("executed_actions") or []
+    # Only this round's actions — executed_actions accumulates across rounds.
+    actions = state.get("last_executed_actions")
+    if actions is None:
+        actions = state.get("executed_actions") or []
     had_success = any(
-        a.get("status") in {"success", "dry_run"}
+        a.get("status") == "success"
         and a.get("action_type") in {"restart_service", "rollback_deploy"}
         for a in actions
     )
 
-    recovered = False
-    notes = []
-    if health.get("ok"):
-        notes.append("health ok")
+    notes: list[str] = []
+    notes.append("health ok" if health.get("ok") else f"health failed: {health}")
+
+    if probe_err is not None:
+        notes.append(
+            f"probe: {probe['failed']}/{probe['sent']} requests failed "
+            f"(error_rate={probe_err:.2f})"
+        )
+        recovered = bool(probe_err < RECOVERED_ERROR_RATE and health.get("ok"))
+    elif prom_err is not None:
+        notes.append(f"prometheus error_rate={prom_err} (probe unavailable)")
+        recovered = bool(prom_err < RECOVERED_ERROR_RATE and health.get("ok"))
     else:
-        notes.append(f"health failed: {health}")
+        notes.append(
+            "no probe or Prometheus signal — cannot confirm recovery"
+        )
+        if probe.get("detail"):
+            notes.append(str(probe["detail"]))
+        recovered = False
 
-    if err is not None:
-        notes.append(f"error_rate={err}")
-        if err < 0.1:
-            recovered = True
-    elif health.get("ok") and had_success:
-        # When Prometheus empty (local demo), accept health + successful action
-        recovered = True
-        notes.append("prometheus empty — accepted health + successful action")
+    if prom_err is not None and probe_err is not None:
+        notes.append(f"prometheus error_rate={prom_err}")
 
-    # If DRY_RUN and actions succeeded as dry_run, mark recovered for demo continuity
-    # only when health is ok — still honest about dry-run
-    if settings.dry_run and health.get("ok") and had_success:
-        recovered = True
-        notes.append("DRY_RUN mode: treating successful dry-run + healthy as recovered for demo")
+    if settings.dry_run and any(a.get("status") == "dry_run" for a in actions):
+        notes.append(
+            "DRY_RUN: remediation was simulated, not applied — "
+            "any recovery here is not attributable to the plan"
+        )
+    elif recovered and not had_success:
+        notes.append(
+            "recovered without a successful remediation action — may be transient"
+        )
 
     result = VerificationResult(
         recovered=recovered,
-        error_rate=err,
+        error_rate=probe_err if probe_err is not None else prom_err,
         notes="; ".join(notes),
-        evidence=[str(health), str(prom)[:500]],
+        evidence=[str(health), str(probe), str(prom)[:500]],
     )
 
     retries = int(state.get("verification_retries") or 0)

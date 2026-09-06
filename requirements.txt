@@ -35,5 +35,6 @@ streamlit>=1.38.0
 pandas>=2.2.0
 
 # Utilities
+PyYAML>=6.0
 tenacity>=8.5.0
 numpy>=1.26.0

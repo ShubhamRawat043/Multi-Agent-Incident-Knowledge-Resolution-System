@@ -23,7 +23,39 @@ def _heuristic_plan(state: IncidentState) -> RemediationPlan:
     retrieved = state.get("retrieved") or []
     cite = retrieved[0]["source"] if retrieved else None
 
-    if "deploy" in category:
+    # A restart that already failed verification must not be re-proposed —
+    # escalate to the next remediation up the ladder. Only when there is a
+    # deploy to revert: rolling back an incident with no release behind it is
+    # exactly the blind rollback the safety rules forbid.
+    tried = {a.get("action_type") for a in (state.get("executed_actions") or [])}
+    has_deploy_evidence = bool(
+        event.get("deploy_tag") or event.get("deploy_sha") or "deploy" in category
+    )
+    if (
+        "restart_service" in tried
+        and "rollback_deploy" not in tried
+        and has_deploy_evidence
+    ):
+        steps = [
+            RemediationStep(
+                action_type="rollback_deploy",
+                target=service,
+                risk_tier="T2",
+                requires_approval=True,
+                args={"image_tag": "v1.7"},
+                expected_outcome="Restart did not clear the fault — revert the running release",
+                rollback="Re-deploy newer tag after fix",
+                source_citation=cite or "knowledge/sops/deployment_rollback.md",
+            ),
+            RemediationStep(
+                action_type="run_healthcheck",
+                target=service,
+                risk_tier="T0",
+                expected_outcome="Health ok",
+                source_citation=cite,
+            ),
+        ]
+    elif "deploy" in category:
         steps = [
             RemediationStep(
                 action_type="run_healthcheck",
@@ -155,7 +187,12 @@ Event: {state.get('event')}
             {
                 "agent": "planner",
                 "event_type": "plan_created",
-                "payload": {"summary": result.summary, "steps": len(result.steps)},
+                "payload": {
+                    "summary": result.summary,
+                    "count": len(result.steps),
+                    "grounded": result.grounded,
+                    "steps": [s.model_dump() for s in result.steps],
+                },
             }
         ],
     }

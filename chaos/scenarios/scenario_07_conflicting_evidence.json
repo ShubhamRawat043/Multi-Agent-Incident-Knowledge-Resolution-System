@@ -3,13 +3,28 @@
   "description": "Conflicting signals: bad_deploy + latency (multi-agent disagreement)",
   "level": 3,
   "expected_root_cause": "bad deployment (CPU/latency are symptoms)",
+  "incident": {
+    "source": "chaos",
+    "service": "payments-api",
+    "kind": "error",
+    "title": "payments-api errors and CPU/latency spike after v1.8 release",
+    "stacktrace": "Traceback (most recent call last):\n  File \"/app/payments_api/main.py\", line 52, in pay\nTypeError: [payments-api] TypeError in payment processing: unexpected NoneType for amount",
+    "deploy_tag": "v1.8",
+    "deploy_sha": "9f3c2ab"
+  },
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "bad_deploy"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "bad_deploy"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 22.00},
+    "json": {
+      "item": "widget",
+      "amount": 22.0
+    },
     "count": 8
   },
   "settle_seconds": 2

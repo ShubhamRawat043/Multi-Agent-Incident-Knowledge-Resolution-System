@@ -3,14 +3,29 @@
   "description": "Bad payments-api deployment causing TypeError + error spike",
   "level": 2,
   "expected_root_cause": "bad deployment",
+  "incident": {
+    "source": "chaos",
+    "service": "payments-api",
+    "kind": "error",
+    "title": "TypeError spike in payments-api after v1.8 release",
+    "stacktrace": "Traceback (most recent call last):\n  File \"/app/payments_api/main.py\", line 52, in pay\nTypeError: [payments-api] TypeError in payment processing: unexpected NoneType for amount (introduced in bad deploy)",
+    "deploy_tag": "v1.8",
+    "deploy_sha": "9f3c2ab"
+  },
   "deploy_tag": "v1.8",
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "bad_deploy"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "bad_deploy"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 29.99},
+    "json": {
+      "item": "widget",
+      "amount": 29.99
+    },
     "count": 8
   },
   "settle_seconds": 2,

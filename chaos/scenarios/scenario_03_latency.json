@@ -3,13 +3,31 @@
   "description": "Artificial latency in payments-api",
   "level": 1,
   "expected_root_cause": "high latency",
+  "incident": {
+    "source": "chaos",
+    "service": "payments-api",
+    "kind": "metric",
+    "title": "payments-api p95 latency above SLO (2.5s)",
+    "metric_series": {
+      "metric": "http_request_duration_seconds",
+      "p95_before": 0.12,
+      "p95_now": 2.54,
+      "window": "10m"
+    }
+  },
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "latency"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "latency"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 9.99},
+    "json": {
+      "item": "widget",
+      "amount": 9.99
+    },
     "count": 4
   },
   "settle_seconds": 1

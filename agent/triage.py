@@ -14,7 +14,9 @@ def triage_node(state: IncidentState) -> dict[str, Any]:
     if event.stacktrace:
         event.stacktrace = redact(event.stacktrace)
 
-    existing = find_open_by_fingerprint(event.fingerprint or "")
+    existing = find_open_by_fingerprint(
+        event.fingerprint or "", exclude_id=state.get("incident_id")
+    )
     known = match_known_issue(event)
 
     # Optional semantic boost via RAG if available

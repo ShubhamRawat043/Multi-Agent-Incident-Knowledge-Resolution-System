@@ -1,15 +1,28 @@
 {
   "id": "scenario_04_db_pool",
-  "description": "DB connection pool exhaustion — no recent deploy",
+  "description": "DB connection pool exhaustion \u2014 no recent deploy",
   "level": 2,
   "expected_root_cause": "db connection pool exhaustion",
+  "incident": {
+    "source": "chaos",
+    "service": "payments-api",
+    "kind": "error",
+    "title": "payments-api ConnectionPoolTimeout - pool at 100% capacity",
+    "stacktrace": "Traceback (most recent call last):\n  File \"/app/payments_api/main.py\", line 52, in pay\nTimeoutError: [payments-api] ConnectionPoolTimeout: pool at 100% capacity (in_use=20)"
+  },
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "db_pool_exhaustion"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "db_pool_exhaustion"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 14.50},
+    "json": {
+      "item": "widget",
+      "amount": 14.5
+    },
     "count": 6
   },
   "settle_seconds": 1

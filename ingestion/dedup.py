@@ -13,7 +13,16 @@ def get_conn() -> psycopg.Connection:
     return psycopg.connect(settings.database_url)
 
 
-def find_open_by_fingerprint(fingerprint: str) -> Optional[dict[str, Any]]:
+def find_open_by_fingerprint(
+    fingerprint: str, exclude_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """
+    Find an *other* open incident sharing this fingerprint.
+
+    `exclude_id` is required in the normal ingestion path: the API inserts the
+    incident row before running the graph, so without it triage matches the row
+    it just wrote and declares every incident a duplicate of itself.
+    """
     if not fingerprint:
         return None
     try:
@@ -24,11 +33,12 @@ def find_open_by_fingerprint(fingerprint: str) -> Optional[dict[str, Any]]:
                     SELECT id, status, title, service
                     FROM incidents
                     WHERE fingerprint = %s
+                      AND (%s::text IS NULL OR id <> %s)
                       AND status NOT IN ('resolved', 'escalated')
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
-                    (fingerprint,),
+                    (fingerprint, exclude_id, exclude_id),
                 )
                 row = cur.fetchone()
                 if not row:

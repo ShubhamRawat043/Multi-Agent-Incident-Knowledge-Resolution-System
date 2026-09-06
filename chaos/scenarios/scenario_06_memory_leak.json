@@ -3,13 +3,31 @@
   "description": "Memory leak in payments-api (false-lead capable with CPU/memory metrics)",
   "level": 3,
   "expected_root_cause": "memory leak",
+  "incident": {
+    "source": "chaos",
+    "service": "payments-api",
+    "kind": "metric",
+    "title": "payments-api resident memory growing without plateau",
+    "metric_series": {
+      "metric": "process_memory_bytes_sim",
+      "start_bytes": 50000000,
+      "now_bytes": 355000000,
+      "window": "30m"
+    }
+  },
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "memory_leak"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "memory_leak"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 7.00},
+    "json": {
+      "item": "widget",
+      "amount": 7.0
+    },
     "count": 10
   },
   "settle_seconds": 2

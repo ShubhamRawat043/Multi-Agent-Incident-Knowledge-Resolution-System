@@ -28,6 +28,20 @@ def supervisor_node(state: IncidentState) -> dict[str, Any]:
     inv_rounds = int(state.get("investigation_rounds") or 0)
     ver_retries = int(state.get("verification_retries") or 0)
 
+    if verification and verification.get("recovered"):
+        return {
+            "supervisor_rounds": rounds,
+            "next_action": "close",
+            "status": "resolved",
+            "audit_log": [
+                {
+                    "agent": "supervisor",
+                    "event_type": "resolved",
+                    "payload": {"rounds": rounds},
+                }
+            ],
+        }
+
     # Hard caps — never burn tokens forever
     if rounds > max_rounds:
         return {
@@ -39,20 +53,6 @@ def supervisor_node(state: IncidentState) -> dict[str, Any]:
                 {
                     "agent": "supervisor",
                     "event_type": "max_rounds",
-                    "payload": {"rounds": rounds},
-                }
-            ],
-        }
-
-    if verification and verification.get("recovered"):
-        return {
-            "supervisor_rounds": rounds,
-            "next_action": "close",
-            "status": "resolved",
-            "audit_log": [
-                {
-                    "agent": "supervisor",
-                    "event_type": "resolved",
                     "payload": {"rounds": rounds},
                 }
             ],
@@ -169,7 +169,7 @@ def supervisor_node(state: IncidentState) -> dict[str, Any]:
         "close": "resolved" if (verification or {}).get("recovered") else state.get("status", "triage"),
     }
 
-    return {
+    update: dict[str, Any] = {
         "supervisor_rounds": rounds,
         "next_action": decision.next_action,
         "confidence": decision.confidence or confidence,
@@ -182,6 +182,37 @@ def supervisor_node(state: IncidentState) -> dict[str, Any]:
             }
         ],
     }
+
+    # Looping back after a failed remediation: drop the spent plan and its
+    # verification, otherwise `plan is not None` routes every later round
+    # straight back to investigate and a second attempt never happens.
+    if (
+        verification
+        and not verification.get("recovered")
+        and decision.next_action in {"investigate", "retrieve"}
+    ):
+        failed = [
+            a.get("action_type")
+            for a in (state.get("last_executed_actions") or [])
+            if a.get("action_type")
+        ]
+        update["plan"] = None
+        update["verification"] = None
+        update["critic_feedback"] = (
+            "The previous remediation did not restore the service "
+            f"(attempted: {', '.join(failed) or 'none'}; "
+            f"verification: {verification.get('notes')}). "
+            "Propose a different, stronger remediation — do not repeat the same steps."
+        )
+        update["audit_log"] = update["audit_log"] + [
+            {
+                "agent": "supervisor",
+                "event_type": "replan_requested",
+                "payload": {"failed_actions": failed, "attempt": ver_retries + 1},
+            }
+        ]
+
+    return update
 
 
 def route_supervisor(

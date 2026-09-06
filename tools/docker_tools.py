@@ -75,6 +75,8 @@ def _guard(target: str):
 @tool
 def run_healthcheck(target: str) -> dict:
     """Run /health against a demo service container target (by service name). T0 read-only."""
+    import time
+
     import httpx
 
     url_map = {
@@ -84,26 +86,45 @@ def run_healthcheck(target: str) -> dict:
         "incident-payments-api": settings.payments_api_url,
     }
     base = url_map.get(target, settings.payments_api_url if "payment" in target else settings.orders_api_url)
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.get(f"{base.rstrip('/')}/health")
-            return {
-                "action": "run_healthcheck",
-                "target": target,
-                "status": "success",
-                "http_status": resp.status_code,
-                "body": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text,
-                "dry_run": False,
-                "risk_tier": "T0",
-            }
-    except Exception as exc:
-        return {
-            "action": "run_healthcheck",
-            "target": target,
-            "status": "failed",
-            "detail": str(exc),
-            "risk_tier": "T0",
-        }
+
+    # Docker reports a container "running" as soon as the process starts, but
+    # the app inside (uvicorn) still needs a moment to bind its port — a real,
+    # measured gap of roughly 1-1.5s right after container.restart() returns.
+    # This tool is almost always called immediately after restart_service in
+    # the heuristic remediation plan (agent/planner.py), including for the
+    # two restart-curable fault types (db_pool_exhaustion, memory_leak), so a
+    # single unretried request can misreport a genuinely-recovered service as
+    # unreachable. Retry briefly instead of failing on the first miss.
+    attempts = 4
+    delay = 0.5
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(f"{base.rstrip('/')}/health")
+                return {
+                    "action": "run_healthcheck",
+                    "target": target,
+                    "status": "success",
+                    "http_status": resp.status_code,
+                    "body": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text,
+                    "dry_run": False,
+                    "risk_tier": "T0",
+                    "attempts": attempt + 1,
+                }
+        except Exception as exc:
+            last_exc = exc
+            if attempt < attempts - 1:
+                time.sleep(delay)
+
+    return {
+        "action": "run_healthcheck",
+        "target": target,
+        "status": "failed",
+        "detail": str(last_exc),
+        "risk_tier": "T0",
+        "attempts": attempts,
+    }
 
 
 @tool

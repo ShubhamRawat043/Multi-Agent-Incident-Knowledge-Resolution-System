@@ -78,7 +78,7 @@ class Settings:
         self.fast_model = _env("OPENAI_FAST_MODEL", "gpt-4o-mini")
         self.strong_model = _env("OPENAI_STRONG_MODEL", "gpt-4o")
 
-        self.supervisor_max_rounds = _env_int("SUPERVISOR_MAX_ROUNDS", 6)
+        self.supervisor_max_rounds = _env_int("SUPERVISOR_MAX_ROUNDS", 10)
         self.investigation_max_rounds = _env_int("INVESTIGATION_MAX_ROUNDS", 3)
         self.specialist_max_steps = _env_int("SPECIALIST_MAX_STEPS", 4)
         self.critic_max_revisions = _env_int("CRITIC_MAX_REVISIONS", 3)

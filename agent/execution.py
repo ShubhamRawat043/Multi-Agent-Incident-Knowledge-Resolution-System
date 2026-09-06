@@ -151,6 +151,7 @@ def execution_node(state: IncidentState) -> dict[str, Any]:
 
     return {
         "executed_actions": results,
+        "last_executed_actions": results,
         "status": "investigating",
         "audit_log": audit
         + [

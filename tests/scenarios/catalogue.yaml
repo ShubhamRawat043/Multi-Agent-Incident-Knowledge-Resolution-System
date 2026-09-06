@@ -1,5 +1,11 @@
 # Behavioral test catalogue (16 tests across 7 levels)
-# Each entry maps to a chaos scenario and expected agent behaviors.
+#
+# Each entry maps to a chaos scenario and to executable assertions.
+# Every name under `expect:` must exist in tests/expectations.py -- the runner
+# warns if one does not. `approval:` controls how the runner answers a HITL
+# prompt (default "approve"; use "reject" to exercise the cancel path).
+#
+# Run with:  python -m tests.run_catalogue [--test T05] [--level 6] [--live]
 
 tests:
   - id: T01
@@ -114,6 +120,7 @@ tests:
     level: 6
     name: Rejected action
     scenario: scenario_02_bad_deploy
+    approval: reject
     expect:
       - human_no_cancels_step
 

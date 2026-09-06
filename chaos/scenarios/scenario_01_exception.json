@@ -3,13 +3,26 @@
   "description": "Application exception in payments-api",
   "level": 1,
   "expected_root_cause": "application exception",
+  "incident": {
+    "source": "chaos",
+    "service": "payments-api",
+    "kind": "error",
+    "title": "RuntimeError in payments-api /pay",
+    "stacktrace": "Traceback (most recent call last):\n  File \"/app/payments_api/main.py\", line 52, in pay\n    fault = apply_fault(SERVICE)\nRuntimeError: [payments-api] Injected application exception"
+  },
   "targets": [
-    {"service_url": "http://localhost:8002", "fault": "exception"}
+    {
+      "service_url": "http://localhost:8002",
+      "fault": "exception"
+    }
   ],
   "traffic": {
     "url": "http://localhost:8001/orders",
     "method": "POST",
-    "json": {"item": "widget", "amount": 19.99},
+    "json": {
+      "item": "widget",
+      "amount": 19.99
+    },
     "count": 3
   },
   "settle_seconds": 1

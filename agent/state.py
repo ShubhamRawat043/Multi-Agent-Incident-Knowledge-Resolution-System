@@ -164,6 +164,9 @@ class IncidentState(TypedDict, total=False):
 
     # execution
     executed_actions: Annotated[list[dict], _add_dicts]
+    # Just the most recent execution round — executed_actions accumulates,
+    # so verification must not read it to judge the latest attempt.
+    last_executed_actions: list[dict]
     audit_log: Annotated[list[dict], _add_dicts]
 
     # control
